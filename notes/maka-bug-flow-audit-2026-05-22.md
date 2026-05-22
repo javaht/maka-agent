@@ -165,6 +165,40 @@ Fix:
 - `TelemetryRepo` can return the latest runtime probe per connection/model.
 - Health snapshots now emit a separate `runtime_probe` signal per configured enabled connection: unknown before first send, ok after last success, info after user abort, warning after last runtime error.
 
+### 12. Write/Edit mutation tools could escape session cwd
+
+Commit: current write-tool containment change set
+
+Evidence:
+- `Read`, `Glob`, and `Grep` were constrained to session cwd, but `Write` and `Edit` still resolved paths with `resolve(cwd, path)` only.
+- Absolute paths and `../` traversal could write outside the session cwd when the permission mode allowed the tool, and symlink parents could route a write outside the workspace.
+
+Impact:
+- Even with permission prompts, the tool contract said session-cwd work, but the implementation allowed broader filesystem mutation than the user could reasonably infer.
+- In Execute mode, `Write`/`Edit` are allowed by policy and therefore needed a hard path boundary too.
+
+Fix:
+- `Write` now rejects absolute paths, parent traversal, and symlink-parent escapes before writing.
+- `Edit` now reuses the existing realpath containment helper and rejects absolute paths, parent traversal, and symlink file escapes.
+- Regression tests added for both mutation tools.
+
+### 13. Session store accepted path-shaped session ids
+
+Commit: current session-id containment change set
+
+Evidence:
+- `FileSessionStore.sessionDir(sessionId)` joined renderer/runtime supplied session ids directly under `workspaceRoot/sessions`.
+- Operations such as `remove(sessionId)` could receive a traversal-shaped id before path validation existed.
+
+Impact:
+- Most normal calls use generated UUIDs, but IPC/runtime boundaries should still reject path-shaped ids before any filesystem operation.
+
+Fix:
+- Session store now accepts only bounded ids matching `[A-Za-z0-9_-]{1,128}`.
+- `list()` skips malformed folders.
+- All filesystem paths and write queues assert the same id contract before reading, writing, or removing.
+- Regression test verifies traversal ids reject and do not delete an outside victim directory.
+
 ## Remaining Product / Architecture Findings
 
 ### A. Coming Soon settings surfaces still need a product decision
