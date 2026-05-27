@@ -54,6 +54,9 @@ import type {
   PermissionRequestEvent,
   PermissionResponse,
   ProviderType,
+  SearchErrorReason,
+  SearchRequest,
+  SearchResult,
   SessionSummary,
   StoredMessage,
   ToolResultContent,
@@ -302,32 +305,16 @@ export function SessionListPanel(props: {
   // visible, lightweight control in a separate PR. `NavSelection.filter`
   // stays in the type for storage continuity but is internal-only.
   const title = MODULE_NAV_LABEL[props.selection.section];
-  const [searchQuery, setSearchQuery] = useState('');
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // Filter the incoming sessions by name. Case-insensitive substring is
-  // enough for chats — most users name them with the topic. Falls back to
-  // showing everything when the query is empty.
-  const filteredSessions = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return props.sessions;
-    return props.sessions.filter((session) => session.name.toLowerCase().includes(q));
-  }, [props.sessions, searchQuery]);
-
-  // ⌘F / Ctrl+F focuses the search field instead of triggering Electron's
-  // page find. Limit to the sessions section so it doesn't fight the chat.
-  useEffect(() => {
-    function onKeyDown(event: globalThis.KeyboardEvent) {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key !== 'f' && event.key !== 'F') return;
-      if (props.selection.section !== 'sessions') return;
-      event.preventDefault();
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [props.selection.section]);
+  // PR-UX-POLISH-1 commit 4 (WAWQAQ msg `e0dbad11` + kenji msg
+  // `2844f64f`): in-list `筛选会话` filter input removed. All search
+  // capability lives in the top-level `搜索` modal (PR-SEARCH-MODAL-
+  // REAL-0 wires it to `window.maka.search.thread()` in the same PR).
+  // The previous `searchQuery` state + `searchInputRef` + ⌘F/Ctrl+F
+  // focus binding are gone with it; ⌘F is freed for future use.
+  // `filteredSessions` collapses to a direct passthrough of
+  // `props.sessions` — group rendering downstream still partitions
+  // by status / time / filter.
+  const filteredSessions = props.sessions;
 
   function handleListKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     // PR-SIDEBAR-IA-0 Phase 2 fixup (xuan `71687cc7`): the
@@ -477,57 +464,23 @@ export function SessionListPanel(props: {
       </nav>
 
       {/*
-        PR-SIDEBAR-IA-0 Phase 2 fixup v2 (WAWQAQ `49309559`,
-        `4259bf8c`; xuan `c73e74da`, `71687cc7`, `dce5a6fb`; kenji
-        `9f683ea8`):
-          - The Chats/Pinned/Archived nav row switcher was removed.
-          - The "查看已归档对话" link was removed.
-          - The ArrowLeft/Right hidden keyboard filter cycle was
-            removed.
-          - The session-name filter input below is kept, with copy
-            renamed to "筛选会话" so users do not confuse it with
-            the global Search modal (per xuan `dce5a6fb` #1).
-          - `NavSelection.filter` stays as a stable storage field
-            but is no longer exposed as a sidebar control. Future
-            Pinned/Archived access lands in a separate PR with a
-            deliberate, visible control.
-      */}
+        PR-UX-POLISH-1 commit 4 (WAWQAQ msg `e0dbad11` + kenji msg
+        `2844f64f` blocker #2): the in-list `筛选会话` filter input
+        is REMOVED entirely. Search capability lives only in the
+        top-level `搜索` modal (Cmd-click / sidebar nav → modal),
+        which the same PR wires to real `window.maka.search.thread()`
+        backend. No more duplicated search affordances; one canonical
+        entry point.
 
-      <div
-        className="maka-session-search"
-        hidden={props.selection.section !== 'sessions'}
-      >
-        <Search strokeWidth={1.5} aria-hidden="true" />
-        <input
-          ref={searchInputRef}
-          type="search"
-          value={searchQuery}
-          onChange={(event) => setSearchQuery(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape' && searchQuery) {
-              event.preventDefault();
-              setSearchQuery('');
-            }
-          }}
-          placeholder="筛选会话…  F 聚焦"
-          aria-label="筛选会话"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        {searchQuery && (
-          <button
-            type="button"
-            className="maka-session-search-clear"
-            onClick={() => {
-              setSearchQuery('');
-              searchInputRef.current?.focus();
-            }}
-            aria-label="清空搜索"
-          >
-            ×
-          </button>
-        )}
-      </div>
+        Removed with it:
+        - `searchQuery` state + `searchInputRef`
+        - `useMemo(() => filter sessions by name)` — sessions pass
+          through unchanged; group rendering still partitions.
+        - `useEffect(⌘F focuses input)` — ⌘F is freed.
+        - `.maka-session-search` JSX block + clear button.
+        - "没有匹配的会话" empty state (the only consumer was
+          `filteredSessions.length === 0 && searchQuery.length > 0`).
+      */}
 
       <section className="maka-session-list" aria-label={title}>
         <div className="maka-session-list-title">{title}</div>
@@ -588,12 +541,6 @@ export function SessionListPanel(props: {
                 新建对话
               </button>
             </div>
-          ) : filteredSessions.length === 0 ? (
-            <div className="maka-empty-state">
-              <Search className="maka-empty-state-icon" strokeWidth={1.5} />
-              <div className="maka-empty-state-title">没有匹配的会话</div>
-              <div className="maka-empty-state-body">没有名字包含 “{searchQuery}” 的会话。换个关键词，或者按 Esc 清空搜索。</div>
-            </div>
           ) : (
             <div className="maka-list-stack" onKeyDown={handleListKeyDown}>
               <SessionListGroups
@@ -653,24 +600,37 @@ export function SessionListPanel(props: {
           channel / signature / rollback gates) is deferred to a
           separate PR-AUTOUPDATE-0; this button is UI-only.
         */}
-        <button
-          className="maka-nav-row"
-          type="button"
-          onClick={() => props.onOpenUpdate?.()}
-          aria-disabled={props.onOpenUpdate ? undefined : true}
-          data-disabled={props.onOpenUpdate ? undefined : true}
-          // PR-SIDEBAR-IA-0 Phase 2 fixup v3 (xuan msg `dce5a6fb` #4):
-          // when no `onOpenUpdate` is wired, the button is inert and
-          // a keyboard user reaching it via Tab needs context for
-          // why it does nothing. `title` shows on hover; aria-label
-          // gives screen readers the same explanation. Real
-          // auto-update wiring lands in PR-AUTOUPDATE-0.
-          title={props.onOpenUpdate ? undefined : '版本更新：即将推出'}
-          aria-label={props.onOpenUpdate ? '版本更新' : '版本更新（即将推出，暂不可用）'}
-        >
-          <DownloadCloud className="maka-nav-icon" strokeWidth={1.5} />
-          <span>版本更新</span>
-        </button>
+        {/*
+          PR-UX-POLISH-1 (yuejing UX audit P1 #1, kenji boundary 1):
+          when `onOpenUpdate` is NOT wired (current default), render
+          a passive informational tag — NOT a button. Removes the
+          "looks tappable but does nothing" affordance that confuses
+          users. Once PR-AUTOUPDATE-0 wires the real updater, the
+          button form returns. Maps to capability presentation enum
+          `coming_soon`: no hover-pointer, no click, no aria-disabled
+          fake-button mess.
+        */}
+        {props.onOpenUpdate ? (
+          <button
+            className="maka-nav-row"
+            type="button"
+            onClick={() => props.onOpenUpdate!()}
+            aria-label="版本更新"
+          >
+            <DownloadCloud className="maka-nav-icon" strokeWidth={1.5} />
+            <span>版本更新</span>
+          </button>
+        ) : (
+          <div
+            className="maka-nav-row"
+            data-state="coming_soon"
+            aria-label="版本更新即将推出"
+          >
+            <DownloadCloud className="maka-nav-icon" strokeWidth={1.5} />
+            <span>版本更新</span>
+            <span className="maka-nav-row-state-badge">即将推出</span>
+          </div>
+        )}
         <button
           className="maka-nav-row"
           type="button"
@@ -679,6 +639,16 @@ export function SessionListPanel(props: {
           <Settings className="maka-nav-icon" strokeWidth={1.5} />
           <span>设置</span>
         </button>
+        {/*
+          PR-UX-POLISH-1 commit 4 (WAWQAQ msg `e0dbad11` + kenji
+          msg `2844f64f` blocker #1): the `? 快捷键` chip in the
+          sidebar footer is removed. The sidebar footer is for
+          product nav/state, not help affordances. Keyboard
+          shortcut discoverability moves to Command Palette
+          (`查看快捷键` entry) and the existing global `?` keydown
+          listener stays — power users still hit `?` to open the
+          modal; new users find it via Command Palette.
+        */}
       </footer>
     </aside>
   );
@@ -712,7 +682,8 @@ const STUB_VIEWS: Record<
 
 /**
  * PR-SIDEBAR-IA-0 Phase 2 fixup (xuan `91401163` + kenji `6465cf22`,
- * `7c320898`): Search modal SHELL.
+ * `7c320898`) + Phase 3 P0 fixup (WAWQAQ msg `d53852ac`, xuan
+ * `558f1356`, kenji `3ddc91fe`): Search modal SHELL.
  *
  * Renders a centered dialog with the title `搜索` and a single
  * placeholder line. Phase 4 will replace the placeholder body with
@@ -721,6 +692,18 @@ const STUB_VIEWS: Record<
  * `maka://session` / `incognito_active` blocked state / async race +
  * unmount safety).
  *
+ * Lifecycle contract: SearchModal MUST be conditionally mounted by
+ * the parent (`{open && <SearchModal onClose={...} />}`), NOT
+ * always-mounted with an `open` prop. The previous pattern
+ * (`<SearchModal open=... />` with an internal `if (!open) return
+ * null`) sat hooks before a conditional return; while React allows
+ * this in principle, in production WAWQAQ hit a React #310 hook
+ * order mismatch via the same surface (msg `d53852ac`). Matching
+ * `KeyboardHelpModal`'s conditional-mount pattern eliminates the
+ * "hooks before early return" class of bug entirely — there's no
+ * way for a future hook addition to drift past a stale return
+ * statement.
+ *
  * Gate per kenji `7c320898`:
  *   - role="dialog" / aria-modal="true" / explicit title.
  *   - Esc and close button close the modal.
@@ -728,13 +711,131 @@ const STUB_VIEWS: Record<
  *   - Modal shell does NOT call `search:thread` IPC, does NOT store
  *     the query, does NOT write history.
  */
+/**
+ * Dependency-injected search interface. Production wiring binds this
+ * to `window.maka.search.thread`; tests pass an in-memory fake.
+ *
+ * The return type matches the IPC envelope exactly: either an array
+ * of `SearchResult` (success path) or a `{ ok: false, reason, message }`
+ * error envelope. Renderer never throws across the IPC boundary —
+ * fail-closed paths return the error envelope and the modal renders
+ * them as user-facing copy.
+ */
+export interface SearchModalDeps {
+  searchThread(request: SearchRequest): Promise<
+    | SearchResult[]
+    | { ok: false; reason: SearchErrorReason; message: string }
+  >;
+}
+
 export function SearchModal(props: {
-  open: boolean;
   onClose(): void;
+  /**
+   * Navigate to a session (optionally scrolling to a specific turn).
+   * Provided by the application shell so the modal stays portable —
+   * navigation lives in the shell, not in @maka/ui.
+   *
+   * Per kenji `2844f64f` SEARCH gate: navigation MUST NOT construct
+   * `maka://session/<id>` URIs. The callback receives raw ids; the
+   * shell handles routing via existing session-pane state.
+   */
+  onNavigateToSession?(sessionId: string, turnId?: string): void;
+  /**
+   * Injected `search:thread` IPC. Production binds to
+   * `window.maka.search.thread`; tests supply a fake.
+   *
+   * Optional so the modal renders a degraded "search unavailable"
+   * state when the renderer cannot bind to the IPC (legacy / smoke
+   * fixture / preload not loaded). Without an injected deps the
+   * modal does NOT crash.
+   */
+  deps?: SearchModalDeps;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, props.onClose);
-  if (!props.open) return null;
+
+  // PR-UX-POLISH-1 commit 5 (kenji `2844f64f` SEARCH gate):
+  //   - `query` is local state ONLY (no localStorage / no IPC echo).
+  //   - `results` is the most recent successful response; older
+  //     responses are discarded by the inflight ticket guard so the
+  //     UI never shows stale data behind a newer query.
+  //   - `error` carries the IPC error envelope when present. We do
+  //     NOT raise it as a JS throw — the modal renders the message
+  //     copy and the gate's `incognito_active` / `invalid_query`
+  //     reasons trigger specific UI states (privacy banner / empty).
+  //   - `pending` reflects whether ANY IPC call is in flight. We do
+  //     NOT show a spinner if the query is empty (avoids flashing
+  //     loading state during typing).
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [error, setError] = useState<{ reason: SearchErrorReason; message: string } | null>(null);
+  const [pending, setPending] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const ticketRef = useRef(0);
+  const searchThread = props.deps?.searchThread;
+
+  // Debounced search: ~180ms after the user stops typing, send the
+  // request. Empty query clears state without an IPC roundtrip.
+  useEffect(() => {
+    if (!searchThread) return;
+    const trimmed = query.trim();
+    if (trimmed.length === 0) {
+      setResults([]);
+      setError(null);
+      setPending(false);
+      return;
+    }
+    const ticket = ++ticketRef.current;
+    setPending(true);
+    const handle = window.setTimeout(async () => {
+      try {
+        const response = await searchThread({
+          source: 'thread',
+          query: trimmed,
+          limit: 10,
+        });
+        if (ticket !== ticketRef.current) return; // newer query in flight
+        if (Array.isArray(response)) {
+          setResults(response);
+          setError(null);
+        } else {
+          setResults([]);
+          setError({ reason: response.reason, message: response.message });
+        }
+      } catch (err) {
+        if (ticket !== ticketRef.current) return;
+        // IPC layer should never throw, but defend anyway. Render as a
+        // generic provider_error so the user sees a coherent state.
+        setResults([]);
+        setError({
+          reason: 'provider_error',
+          message: err instanceof Error ? err.message : '搜索暂时不可用，请稍后重试。',
+        });
+      } finally {
+        if (ticket === ticketRef.current) setPending(false);
+      }
+    }, 180);
+    return () => window.clearTimeout(handle);
+  }, [query, searchThread]);
+
+  // Focus the input on mount so users can type immediately. The
+  // useModalA11y hook handles focus trap + restore on close.
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  function selectResult(result: SearchResult) {
+    if (!props.onNavigateToSession) return;
+    if (result.target?.kind !== 'thread') return;
+    props.onNavigateToSession(result.target.sessionId, result.target.turnId);
+    props.onClose();
+  }
+
+  const incognitoBlocked = error?.reason === 'incognito_active';
+  const trimmed = query.trim();
+  const showResults = !error && trimmed.length > 0 && !pending && results.length > 0;
+  const showEmpty = !error && trimmed.length > 0 && !pending && results.length === 0;
+
   return (
     <div
       className="maka-modal-backdrop maka-search-modal-backdrop"
@@ -760,13 +861,84 @@ export function SearchModal(props: {
             ×
           </button>
         </header>
-        <div className="maka-search-modal-body">
-          <p className="maka-search-modal-placeholder">
-            搜索弹窗即将可用：下一步会接入会话内容搜索。
-          </p>
-          <p className="maka-search-modal-placeholder-detail">
-            Phase 4 会在这里增加搜索框、结果列表，以及 incognito 隐私状态处理。
-          </p>
+        <div className="maka-search-modal-input-row">
+          <Search size={16} strokeWidth={1.75} aria-hidden="true" className="maka-search-modal-input-icon" />
+          <input
+            ref={inputRef}
+            type="search"
+            className="maka-search-modal-input"
+            placeholder="搜索会话内容…"
+            aria-label="搜索会话内容"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && query) {
+                event.preventDefault();
+                setQuery('');
+              }
+            }}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <div className="maka-search-modal-body" role="region" aria-live="polite">
+          {!searchThread && (
+            <p className="maka-search-modal-placeholder">
+              当前环境无法连接搜索后端，请稍后重试。
+            </p>
+          )}
+          {searchThread && incognitoBlocked && (
+            <div className="maka-search-modal-state" data-tone="info">
+              <p>隐私模式已关闭搜索。</p>
+              <p className="maka-search-modal-state-detail">
+                关闭隐私模式后可以继续按关键词查找历史对话。
+              </p>
+            </div>
+          )}
+          {searchThread && !incognitoBlocked && error && (
+            <div className="maka-search-modal-state" data-tone="warning">
+              <p>搜索暂时无法完成。</p>
+              <p className="maka-search-modal-state-detail">{error.message}</p>
+            </div>
+          )}
+          {searchThread && !error && trimmed.length === 0 && (
+            <p className="maka-search-modal-placeholder">
+              开始输入以按关键词查找历史对话。结果只包含会话内容文本，不进入网络。
+            </p>
+          )}
+          {searchThread && pending && trimmed.length > 0 && (
+            <p className="maka-search-modal-placeholder" aria-live="polite">
+              正在搜索…
+            </p>
+          )}
+          {showEmpty && (
+            <p className="maka-search-modal-placeholder">
+              没有匹配的会话内容。换个关键词试试。
+            </p>
+          )}
+          {showResults && (
+            <ul className="maka-search-modal-results" role="list">
+              {results.map((result, index) => (
+                <li key={`${result.target?.kind === 'thread' ? result.target.sessionId : index}-${index}`}>
+                  <button
+                    type="button"
+                    className="maka-search-modal-result"
+                    onClick={() => selectResult(result)}
+                    disabled={!props.onNavigateToSession || result.target?.kind !== 'thread'}
+                  >
+                    <div className="maka-search-modal-result-title">{result.title}</div>
+                    {result.snippet && (
+                      // Plain text only — IPC already redacts secrets
+                      // and the snippet is bounded by SNIPPET_MAX_CODE_POINTS.
+                      // No markdown rendering, no <img>, no <a href> —
+                      // per kenji SEARCH gate (no path / no URL exposure).
+                      <div className="maka-search-modal-result-snippet">{result.snippet}</div>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
     </div>
@@ -844,13 +1016,19 @@ function SessionListGroups(props: {
                   }}
                 />
                 <span>{group.label}</span>
-                <span className="maka-list-group-count">{group.sessions.length}</span>
+                {/* PR-UX-POLISH-1 commit 3 (kenji `66123c95`): use
+                  full-width Chinese parens `（N）` instead of middle-
+                  dot separator. Reads as natural Chinese count
+                  notation (`会话（65）`) rather than label+meta
+                  pair (`会话 · 65`). The count is part of the
+                  group label's semantic, not separate metadata. */}
+                <span className="maka-list-group-count">（{group.sessions.length}）</span>
               </button>
             ) : (
               <div className="maka-list-group-label">
                 <span>{group.label}</span>
                 {group.sessions.length > 1 && (
-                  <span className="maka-list-group-count">{group.sessions.length}</span>
+                  <span className="maka-list-group-count">（{group.sessions.length}）</span>
                 )}
               </div>
             )}
@@ -1161,16 +1339,42 @@ function SessionRow(props: {
           </div>
         </form>
       ) : (
+        // PR-SIDEBAR-IA-0 Phase 3 (WAWQAQ `14ed98b5` "list 很丑、很肥很
+        // 臃肿"; xuan `6b28984e` Phase 2 sign-off + Phase 3 32-40px
+        // target; xuan `2d4526b5` tightening: NO native title= snippet,
+        // title is ONLY for name truncation): slim row.
+        //
+        // The button is the row's hit target. The native `title=`
+        // attribute carries ONLY the session name so it serves as a
+        // truncation tooltip when the name overflows the row. The
+        // `lastMessagePreview` snippet is intentionally NOT exposed
+        // here — per xuan `2d4526b5`, snippet visibility is a
+        // separate, deliberate design (future PR), not a Phase 3
+        // afterthought via native tooltip.
+        //
+        // `data-active` on the row controls the active-state accent
+        // rail + bg tint via CSS; the row's `name` cluster also
+        // recolors to accent on selected so the row reads as
+        // "current" without a heavy full-bg pill.
         <button
           className="maka-list-row-main"
           type="button"
           data-session-id={session.id}
+          title={session.name}
           onClick={() => onSelect(session.id)}
           onDoubleClick={(event) => {
             event.stopPropagation();
             if (actions) setEditing(true);
           }}
         >
+          {/*
+            PR-SIDEBAR-IA-0 Phase 3 layout (xuan `2d4526b5`):
+              [.maka-list-row-text  (col 1: minmax(0,1fr))] [meta/unread  (col 2: auto)]
+            The text container holds the name cluster (status icons +
+            name + stale pill) and truncates via min-width: 0. The
+            meta column sits at the inline-end with a clear gap so
+            "会话 02" doesn't run into "0m ago".
+          */}
           <div className="maka-list-row-text">
             <div className="maka-list-row-name">
               {streaming && (
@@ -1196,18 +1400,25 @@ function SessionRow(props: {
                 </span>
               )}
             </div>
-            {streaming ? (
-              <div className="maka-list-row-preview" data-streaming="true">
-                Maka 正在思考…
-              </div>
-            ) : session.lastMessagePreview ? (
-              <div className="maka-list-row-preview" title={session.lastMessagePreview}>
-                {session.lastMessagePreview}
-              </div>
-            ) : null}
-            <div className="maka-list-row-meta">{formatSessionMeta(session)}</div>
           </div>
-          {session.hasUnread && !streaming && <span className="maka-list-row-unread" />}
+          {/*
+            PR-SIDEBAR-IA-0 Phase 3 (xuan `2d4526b5`): snippet preview
+            (`.maka-list-row-preview`) is no longer rendered in the
+            default DOM AND is no longer exposed via native `title=`
+            tooltip. Snippet visibility is deliberately deferred to a
+            future PR with its own hover/focus detail design.
+            `formatSessionMeta` shows the relative time inline in the
+            row's `auto` grid column (sibling of `.maka-list-row-text`,
+            not nested inside it — required for proper gap + alignment).
+            The unread dot replaces the time when
+            `hasUnread && !streaming` (mutually exclusive — unread
+            takes priority).
+          */}
+          {session.hasUnread && !streaming ? (
+            <span className="maka-list-row-unread" aria-label="未读消息" />
+          ) : (
+            <span className="maka-list-row-meta">{formatSessionMeta(session)}</span>
+          )}
         </button>
       )}
       {actions && !editing && (
@@ -1927,7 +2138,10 @@ const EMPTY_HERO_COPY_BY_LOCALE: Record<PromptSuggestionLocale, {
 }> = {
   zh: {
     ariaLabel: '开始对话',
-    eyebrow: 'READY · 想一起做点什么？',
+    // PR-SIDEBAR-IA-0 Phase 3 P0 fixup v2 (kenji `08be08d8` +
+    // `e2f932d7`): dropped the all-caps English prefix that read
+    // inconsistently against the rest of this Chinese-first surface.
+    eyebrow: '准备就绪 · 想一起做点什么？',
     greeting: {
       morning: '早上好',
       noon: '中午好',
@@ -2153,7 +2367,7 @@ function messageRoleLabel(role: string, userLabel?: string): string {
 /**
  * Initial-glyph derivation for the message avatar. Uses the first non-ASCII
  * codepoint or first ASCII letter so a userLabel like "JK" → "J", a Chinese
- * userLabel like "建文" → "建", an emoji name like "🦊 fox" → "🦊".
+ * Chinese userLabel like "用户" → "用", an emoji name like "🦊 fox" → "🦊".
  */
 function avatarInitial(label: string): string {
   const trimmed = label.trim();
@@ -2792,14 +3006,22 @@ const COMPOSER_COPY_BY_LOCALE: Record<UiLocale, {
   zh: {
     placeholder: '给 Maka 发消息…',
     awaitingPermission: '等待你确认权限…',
-    streamingHintPrefix: 'Maka 正在思考…',
+    // PR-UX-POLISH-1 (yuejing UX audit msg `9c779b56`): composer streaming
+    // hint now reads `正在回答` so it doesn't conflict with the
+    // ReasoningPanel's `正在思考` (which displays the model's actual
+    // extended-thinking stream). Composer = output-streaming;
+    // ReasoningPanel = reasoning-streaming; distinct signals, distinct copy.
+    streamingHintPrefix: 'Maka 正在回答…',
     streamingHintInterrupt: '或点 Stop 中断',
     enterHint: { send: '发送', newline: '换行' },
   },
   en: {
     placeholder: 'Message Maka…',
     awaitingPermission: 'Waiting for your permission decision…',
-    streamingHintPrefix: 'Maka is thinking…',
+    // PR-UX-POLISH-1: parallel en-locale fix — `is responding` instead of
+    // `is thinking`, so it doesn't collide with the ReasoningPanel's
+    // `Thinking…` label.
+    streamingHintPrefix: 'Maka is responding…',
     streamingHintInterrupt: 'or click Stop to interrupt',
     enterHint: { send: 'to send', newline: 'for newline' },
   },

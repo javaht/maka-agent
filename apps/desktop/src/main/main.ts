@@ -331,6 +331,14 @@ async function createWindow(): Promise<void> {
     title: 'Maka',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 24, y: 24 },
+    // PR-SIDEBAR-IA-0 Phase 3 P0 fixup v5 (WAWQAQ msg `5b85fdb1`,
+    // xuan `eea556cd`): explicit `resizable: true` so a future
+    // patch can't silently disable window edge resize. Default is
+    // already `true`, but pinning it here removes the ambiguity
+    // and makes the intent obvious to reviewers; CSS-level fixes
+    // (see `app-region-hygiene-contract.test.ts`) cover the
+    // renderer side of the same gate.
+    resizable: true,
     backgroundColor: initialBg,
     webPreferences: {
       preload: join(import.meta.dirname, '..', 'preload', 'preload.cjs'),
@@ -433,6 +441,56 @@ async function createWindow(): Promise<void> {
   } else {
     await mainWindow.loadFile(join(import.meta.dirname, '..', 'renderer', 'index.html'));
   }
+  if (process.env.MAKA_REAL_WINDOW_SMOKE === '1') {
+    emitRealWindowSmokeDiagnostic('after-load');
+    setTimeout(() => emitRealWindowSmokeDiagnostic('settled-1000ms'), 1000);
+  }
+}
+
+function emitRealWindowSmokeDiagnostic(stage: string): void {
+  const target = mainWindow;
+  if (!target) {
+    console.log(`[real-window-smoke] diagnostic ${JSON.stringify({ stage, windowExists: false })}`);
+    return;
+  }
+  const windowState = {
+    stage,
+    windowExists: true,
+    title: target.getTitle(),
+    bounds: target.getBounds(),
+    normalBounds: target.getNormalBounds(),
+    isVisible: target.isVisible(),
+    isFocused: target.isFocused(),
+    isMinimized: target.isMinimized(),
+    isMaximized: target.isMaximized(),
+    isResizable: target.isResizable(),
+    isMovable: target.isMovable(),
+    isModal: target.isModal(),
+    webContentsUrl: target.webContents.getURL(),
+  };
+  target.webContents
+    .executeJavaScript(
+      `(() => ({
+        readyState: document.readyState,
+        title: document.title,
+        appFramePresent: Boolean(document.querySelector('.appFrame')),
+        searchModalPresent: Boolean(document.querySelector('.maka-search-modal')),
+        searchModalBackdropPresent: Boolean(document.querySelector('.maka-search-modal-backdrop')),
+        errorBoundaryPresent: Boolean(document.querySelector('.maka-error-surface')),
+        activeElement: document.activeElement ? {
+          tagName: document.activeElement.tagName,
+          className: typeof document.activeElement.className === 'string' ? document.activeElement.className : '',
+          ariaLabel: document.activeElement.getAttribute('aria-label'),
+        } : null,
+      }))()`,
+      true,
+    )
+    .then((rendererState) => {
+      console.log(`[real-window-smoke] diagnostic ${JSON.stringify({ ...windowState, renderer: rendererState })}`);
+    })
+    .catch((err: unknown) => {
+      console.log(`[real-window-smoke] diagnostic ${JSON.stringify({ ...windowState, rendererError: errorMessage(err) })}`);
+    });
 }
 
 

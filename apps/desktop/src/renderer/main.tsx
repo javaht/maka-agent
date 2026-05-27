@@ -154,7 +154,7 @@ function AppShell(props: {
   const [density, setDensity] = useState<UiDensity>('comfortable');
   const [userLabel, setUserLabel] = useState<string>('');
   const [skills, setSkills] = useState<SkillEntry[]>([]);
-  const [helpOpen, closeHelp] = useKeyboardHelp();
+  const [helpOpen, closeHelp, openHelp] = useKeyboardHelp();
   const [paletteOpen, openPalette, closePalette] = useCommandPalette();
   // PR-SIDEBAR-IA-0 Phase 2 fixup (xuan `91401163` + kenji `7c320898`):
   // Search modal state. Sidebar `搜索` nav row triggers `openSearchModal`;
@@ -754,6 +754,25 @@ function AppShell(props: {
     if (state.searchModalOpen) {
       setSearchModalOpen(true);
     }
+    // PR-SIDEBAR-IA-0 Phase 3 P0 fixup v4 (WAWQAQ msg `5dd1c348`,
+    // kenji `b3d156e9`): when the fixture sets `focusActiveRow`,
+    // focus the active row's button after the next paint so the
+    // row's `:focus-within` triggers and the `.maka-list-row-actions`
+    // overlay becomes visible. The auto-capture then shows the
+    // actions cluster against the slim row, proving the time meta
+    // + unread dot are hidden underneath (no overlap with the
+    // action icons — the bug WAWQAQ flagged). Two RAFs let React
+    // commit the active selection before we query the DOM.
+    if (state.focusActiveRow) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const activeRowButton = document.querySelector<HTMLButtonElement>(
+            '.maka-list-row[data-active="true"] .maka-list-row-main',
+          );
+          activeRowButton?.focus({ preventScroll: true });
+        });
+      });
+    }
     // PR-IR-01: when MAKA_VISUAL_SMOKE_AUTO_CAPTURE is set, snap a
     // screenshot once the fixture has settled and the renderer has
     // committed. We wait two RAFs + a small idle delay so async layout
@@ -771,7 +790,16 @@ function AppShell(props: {
             // Keep screenshot baselines free of focus rings / caret blink.
             // Interaction-specific focus behavior is covered by node tests
             // and manual smoke paths; auto-capture should measure layout.
-            if (document.activeElement instanceof HTMLElement) {
+            //
+            // PR-SIDEBAR-IA-0 Phase 3 P0 fixup v4 exception (WAWQAQ
+            // msg `5dd1c348`): when the fixture asks for a focused
+            // active row (e.g. the `sidebar-row-actions-visible`
+            // scenario, which proves the action overlay doesn't
+            // overlap the time meta), the blur step would defeat the
+            // whole point of the capture. Skip the blur in that
+            // narrow case; other captures still get a clean (focusless)
+            // baseline.
+            if (!state.focusActiveRow && document.activeElement instanceof HTMLElement) {
               document.activeElement.blur();
             }
             if ('fonts' in document) {
@@ -1612,7 +1640,39 @@ function AppShell(props: {
         />
       )}
       {helpOpen && <KeyboardHelpModal onClose={closeHelp} />}
-      <SearchModal open={searchModalOpen} onClose={() => setSearchModalOpen(false)} />
+      {/*
+        PR-SIDEBAR-IA-0 Phase 3 P0 fixup (WAWQAQ msg `d53852ac`):
+        SearchModal must be conditionally mounted, not always
+        mounted with an internal `if (!open) return null`. Matches
+        `KeyboardHelpModal` lifecycle pattern above and removes the
+        hooks-before-early-return shape that React #310 punished
+        in WAWQAQ's run.
+      */}
+      {/*
+        PR-UX-POLISH-1 commit 5 (WAWQAQ msg `e0dbad11` + kenji msg
+        `2844f64f` blocker #3): SearchModal is now wired to the real
+        `window.maka.search.thread` IPC. Renderer never touches
+        thread JSONL directly; the IPC enforces incognito gate +
+        bounded scan + snippet redaction per `@maka/core/search`
+        contract. Navigation is supplied via `onNavigateToSession`
+        callback (no `maka://session` URI construction).
+      */}
+      {searchModalOpen && (
+        <SearchModal
+          onClose={() => setSearchModalOpen(false)}
+          deps={{ searchThread: (request) => window.maka.search.thread(request) }}
+          onNavigateToSession={(sessionId, _turnId) => {
+            // Activate the target session. `turnId` is ignored for
+            // now — scrolling to a specific turn requires plumbing
+            // through ChatView's scroll anchor, which lands in a
+            // follow-up PR (the contract for `target.turnId` exists
+            // per PR-SEARCH-1.5 but the renderer doesn't consume it
+            // yet to keep this PR focused on search wiring).
+            setNavSelection({ section: 'sessions', filter: 'chats' });
+            setActiveId(sessionId);
+          }}
+        />
+      )}
       {paletteOpen && (
         <CommandPalette
           onClose={closePalette}
@@ -1626,11 +1686,12 @@ function AppShell(props: {
             onNewChat: () => void createSession(),
             onOpenSettings: openSettings,
             onOpenSettingsSection: (section) => openSettingsSection(section),
-            onOpenShortcuts: () => {
-              // useKeyboardHelp() exposes only close; trigger via window event
-              // simulation by dispatching a `?` keypress on the document.
-              window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
-            },
+            // PR-UX-POLISH-1 commit 4 (WAWQAQ `e0dbad11` + kenji `2844f64f`):
+            // use the openHelp callback returned by useKeyboardHelp directly,
+            // instead of dispatching a synthetic KeyboardEvent. Same effect,
+            // clearer intent, and avoids the foot-gun where a typed `?` in a
+            // text input would be swallowed by the global keydown listener.
+            onOpenShortcuts: openHelp,
             onSetTheme: setThemePref,
             onTestConnection: async (slug) => {
               try {

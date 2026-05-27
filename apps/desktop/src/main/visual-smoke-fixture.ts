@@ -77,6 +77,14 @@ const VISUAL_SMOKE_SCENARIOS = new Set<VisualSmokeScenario>([
   // modal at mount. Captures the SearchModal shell deterministically
   // so xuan's Phase 2 modal gate has a baseline.
   'sidebar-search-modal-open',
+  // PR-SIDEBAR-IA-0 Phase 3 P0 fixup v4 (WAWQAQ msg `5dd1c348`,
+  // kenji `b3d156e9`): same 60-session seed; differs in
+  // `focusActiveRow: true`, which programmatically focuses the
+  // active row's button after mount so `:focus-within` triggers
+  // and the `.maka-list-row-actions` overlay becomes visible.
+  // Captures the actions-revealed state so reviewers can verify
+  // the time meta + unread dot are hidden underneath (no overlap).
+  'sidebar-row-actions-visible',
 ]);
 
 // Fixed clock for screenshot fixtures. All seeded timestamps and
@@ -302,7 +310,7 @@ export function getVisualSmokeState(fixture: VisualSmokeFixture | null): VisualS
     // PR108j: Settings sub-page scenarios. Each just opens the relevant
     // Settings section over the standard seed; per-page state lives in
     // the shared settings.json defaults (already includes displayName
-    // = '建文' etc.). Active session stays TURN_SESSION_ID so the chat
+    // = '' so the chat surface falls back to '你', etc.). Active session stays TURN_SESSION_ID so the chat
     // surface behind the modal shows a realistic context.
     case 'settings-data':
       return { ...state, activeSessionId: TURN_SESSION_ID, openSettingsSection: 'data' };
@@ -368,6 +376,17 @@ export function getVisualSmokeState(fixture: VisualSmokeFixture | null): VisualS
         ...state,
         activeSessionId: LONG_SIDEBAR_SESSION_PREFIX + '00',
         searchModalOpen: true,
+      };
+    case 'sidebar-row-actions-visible':
+      // PR-SIDEBAR-IA-0 Phase 3 P0 fixup v4 (WAWQAQ msg `5dd1c348`):
+      // same 60-session seed; `focusActiveRow: true` makes the
+      // renderer focus the active row's button after mount so
+      // `:focus-within` triggers and the action overlay shows.
+      // Captures the actions-revealed state for the overlap gate.
+      return {
+        ...state,
+        activeSessionId: LONG_SIDEBAR_SESSION_PREFIX + '00',
+        focusActiveRow: true,
       };
     case 'all':
       return {
@@ -460,6 +479,7 @@ export async function seedVisualSmokeFixture(input: {
 const LONG_SIDEBAR_SCENARIOS = new Set<VisualSmokeScenario>([
   'sidebar-long-sessions',
   'sidebar-search-modal-open',
+  'sidebar-row-actions-visible',
 ]);
 
 /**
@@ -514,8 +534,23 @@ const LONG_SIDEBAR_SESSION_PREFIX = 'visual-smoke-sidebar-long-';
 const LONG_SIDEBAR_SESSION_COUNT = 60;
 
 async function writeSettings(workspaceRoot: string): Promise<void> {
+  // PR-SIDEBAR-IA-0 Phase 3 P0 fixup v2 (kenji `08be08d8` + WAWQAQ
+  // `1886c41b`): the fixture previously seeded a placeholder
+  // Chinese personal name for screenshot baselines, but a real
+  // user reading the chat surface can't tell who that placeholder
+  // is. Worse, if a demo workspace was ever opened on top of a
+  // real user's workspace, the placeholder would persist and
+  // confuse them about who set it.
+  //
+  // Phase 3 fixup v2 leaves `displayName` empty so the
+  // `messageRoleLabel` fallback (`'你'`) is what shows in
+  // screenshots — exactly what a new, unconfigured user would
+  // see. Settings test (`visual-smoke-fixture.test.ts`) asserts
+  // the empty-string value so a future patch that re-adds a
+  // demo name lands as an explicit copy decision, not silent
+  // drift.
   const settings = createDefaultSettings();
-  settings.personalization.displayName = '建文';
+  settings.personalization.displayName = '';
   settings.appearance.theme = 'auto';
   await writeJson(join(workspaceRoot, 'settings.json'), settings);
 }
