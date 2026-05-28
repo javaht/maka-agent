@@ -755,7 +755,7 @@ export function EmptyState(props: EmptyStateProps) {
  * (e.g. a desktop notification renderer).
  */
 export interface DailyReviewBridge {
-  fetchDay(offsetDays: number): Promise<DailyReviewSummary>;
+  fetchDay(offsetDays: number, daySpan?: number): Promise<DailyReviewSummary>;
 }
 
 /**
@@ -767,11 +767,17 @@ export interface DailyReviewBridge {
  * borrow: alma "today" digest concept (read-only summary).
  * diverge: no cron, no auto-push, no memory promotion (privacy default).
  */
+type DailyReviewRange = 1 | 7 | 30;
+
 function DailyReviewPanel(props: {
   bridge: DailyReviewBridge;
   onSelectSession?: (sessionId: string) => void;
 }) {
   const [offsetDays, setOffsetDays] = useState(0);
+  // PR-DAILY-REVIEW-RANGE-0: 今日 / 本周 / 本月 tabs that map to a
+  // 1 / 7 / 30 day aggregation. When span > 1, the day-stepper
+  // navigates by the same span (一个 30 天 window steps back 30 days).
+  const [range, setRange] = useState<DailyReviewRange>(1);
   const [summary, setSummary] = useState<DailyReviewSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -781,7 +787,7 @@ function DailyReviewPanel(props: {
     setLoading(true);
     setError(null);
     props.bridge
-      .fetchDay(offsetDays)
+      .fetchDay(offsetDays, range)
       .then((next) => {
         if (cancelled) return;
         setSummary(next);
@@ -796,9 +802,22 @@ function DailyReviewPanel(props: {
     return () => {
       cancelled = true;
     };
-  }, [offsetDays, props.bridge]);
+  }, [offsetDays, range, props.bridge]);
 
-  const dayLabel = offsetDays === 0 ? '今天' : offsetDays === -1 ? '昨天' : `${-offsetDays} 天前`;
+  const dayLabel = (() => {
+    if (range === 1) {
+      if (offsetDays === 0) return '今天';
+      if (offsetDays === -1) return '昨天';
+      return `${-offsetDays} 天前`;
+    }
+    const rangeText = range === 7 ? '最近 7 天' : '最近 30 天';
+    if (offsetDays === 0) return rangeText;
+    return `${rangeText}（往前 ${-offsetDays} 天）`;
+  })();
+
+  // Stepper step matches the range size — for 7-day mode the user
+  // skips a whole week at a time, not a single day.
+  const stepperLabel = range === 1 ? '天' : range === 7 ? '周' : '月';
 
   return (
     <div className="maka-daily-review-panel" data-loading={loading ? 'true' : undefined}>
@@ -806,8 +825,8 @@ function DailyReviewPanel(props: {
         <button
           type="button"
           className="maka-button maka-button-ghost"
-          onClick={() => setOffsetDays((n) => n - 1)}
-          aria-label="查看更早一天"
+          onClick={() => setOffsetDays((n) => n - range)}
+          aria-label={`查看更早一${stepperLabel}`}
         >
           ‹
         </button>
@@ -815,13 +834,42 @@ function DailyReviewPanel(props: {
         <button
           type="button"
           className="maka-button maka-button-ghost"
-          onClick={() => setOffsetDays((n) => Math.min(0, n + 1))}
+          onClick={() => setOffsetDays((n) => Math.min(0, n + range))}
           disabled={offsetDays >= 0}
-          aria-label="查看更晚一天"
+          aria-label={`查看更晚一${stepperLabel}`}
         >
           ›
         </button>
       </header>
+      <nav className="maka-daily-review-range" aria-label="时间范围切换">
+        {([1, 7, 30] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            className="maka-button maka-button-ghost"
+            data-active={range === option ? 'true' : undefined}
+            onClick={() => {
+              setRange(option);
+              setOffsetDays(0);
+            }}
+          >
+            {option === 1 ? '今日' : option === 7 ? '本周' : '本月'}
+          </button>
+        ))}
+        {summary && summary.totals.sessionCount + summary.totals.requestCount > 0 && (
+          <button
+            type="button"
+            className="maka-button maka-button-ghost maka-daily-review-copy"
+            onClick={() => {
+              const md = formatDailyReviewMarkdown(summary, dayLabel);
+              void navigator.clipboard.writeText(md).catch(() => {});
+            }}
+            title="复制为 Markdown 摘要，方便分享 / 贴到笔记"
+          >
+            复制
+          </button>
+        )}
+      </nav>
 
       {error ? (
         <EmptyState
@@ -904,6 +952,51 @@ function DailyReviewPanel(props: {
       )}
     </div>
   );
+}
+
+/**
+ * PR-DAILY-REVIEW-COPY-0: produce a Markdown summary of the current
+ * Daily Review for clipboard share. Sessions list is title-only —
+ * we deliberately skip lastMessagePreview because the message body
+ * may contain content the user does not want in a shared note.
+ */
+export function formatDailyReviewMarkdown(
+  summary: DailyReviewSummary,
+  dayLabel: string,
+): string {
+  const lines: string[] = [];
+  lines.push(`# Maka · 每日回顾 · ${dayLabel}`);
+  lines.push('');
+  lines.push(`- 对话：${summary.totals.sessionCount}`);
+  lines.push(`- 请求：${summary.totals.requestCount}`);
+  lines.push(`- Tokens：${summary.totals.totalTokens.toLocaleString()}`);
+  lines.push(`- 费用：$${summary.totals.costUsd.toFixed(2)}`);
+  if (summary.totals.errorCount > 0) {
+    lines.push(`- 错误：${summary.totals.errorCount}`);
+  }
+  if (summary.sessions.length > 0) {
+    lines.push('');
+    lines.push('## 活跃对话');
+    for (const session of summary.sessions) {
+      lines.push(`- ${session.name}`);
+    }
+  }
+  if (summary.topModels.length > 0) {
+    lines.push('');
+    lines.push('## 模型使用');
+    for (const entry of summary.topModels) {
+      const cost = entry.costUsd > 0 ? ` · $${entry.costUsd.toFixed(2)}` : '';
+      lines.push(`- ${entry.label}：${entry.requests} 次 · ${entry.totalTokens.toLocaleString()} tok${cost}`);
+    }
+  }
+  if (summary.topTools.length > 0) {
+    lines.push('');
+    lines.push('## 工具调用');
+    for (const entry of summary.topTools) {
+      lines.push(`- ${entry.label}：${entry.requests} 次`);
+    }
+  }
+  return lines.join('\n');
 }
 
 function DailyReviewTotalsCell(props: { label: string; value: string; tone?: 'error' }) {
@@ -1989,6 +2082,12 @@ export function ChatView(props: {
    */
   connectionAlert?: ChatHeaderAlert;
   /**
+   * Visible health for the renderer's live session-event subscription.
+   * Used when the stream goes stale and the desktop shell is refreshing
+   * from persisted messages/session state.
+   */
+  eventStreamAlert?: ChatHeaderAlert;
+  /**
    * Lifecycle status badge for the active session (PR109b, design-system
    * §9.8). Separate from `connectionAlert` because the alert is an
    * ephemeral fault signal while status is the session's settled
@@ -2152,6 +2251,7 @@ export function ChatView(props: {
         <span className="maka-chat-header-spacer" />
         {props.sessionStatusBadge && <SessionStatusBadge badge={props.sessionStatusBadge} />}
         {props.connectionAlert && <ChatHeaderAlertBadge alert={props.connectionAlert} />}
+        {props.eventStreamAlert && <ChatHeaderAlertBadge alert={props.eventStreamAlert} />}
         <PermissionModeSwitcher
           mode={props.activeSession.permissionMode}
           disabled={switcherDisabled}
@@ -2177,18 +2277,24 @@ export function ChatView(props: {
             props.emptyOverride ?? <EmptyChatHero onPromptSuggestion={props.onPromptSuggestion} userLabel={props.userLabel} />
           )}
           {turns.map((turn, idx) => {
-            // PR-CHAT-NON-DEFAULT-MODEL-CHIP-0: previous turn's
-            // assistant modelId so TurnSummary can render a "切换"
-            // pill when this turn used a different model.
-            // Supports kenji's "per-turn override allowed but
-            // must be visible" requirement on PR-SESSION-STICKY-MODEL-0.
-            const previousModelId = (() => {
-              for (let i = idx - 1; i >= 0; i--) {
-                const earlier = turns[i];
-                if (earlier && earlier.modelId) return earlier.modelId;
-              }
-              return undefined;
-            })();
+            // PR-CHAT-NON-DEFAULT-MODEL-CHIP-0 (kenji `af77f61`
+            // session-sticky merge): prefer comparing against the
+            // session's sticky model when available, falling back
+            // to the previous turn's modelId for older sessions
+            // that pre-date the sticky-model field. Either way,
+            // TurnSummary flags the chip when this turn departs
+            // from the expected baseline.
+            const expectedModelId =
+              (props.activeSession?.model && props.activeSession.model.length > 0
+                ? props.activeSession.model
+                : undefined)
+              ?? (() => {
+                for (let i = idx - 1; i >= 0; i--) {
+                  const earlier = turns[i];
+                  if (earlier && earlier.modelId) return earlier.modelId;
+                }
+                return undefined;
+              })();
             return (
               <TurnView
                 key={turn.turnId}
@@ -2199,7 +2305,7 @@ export function ChatView(props: {
                 failedReasonLabel={props.turnFailedReasonLabels?.[turn.turnId]}
                 lineageBadges={props.turnLineageBadgesByTurn?.[turn.turnId]}
                 onLineageBadgeClick={props.onLineageBadgeClick}
-                previousModelId={previousModelId}
+                previousModelId={expectedModelId}
               />
             );
           })}
@@ -2857,7 +2963,7 @@ function TurnSummary(props: { turn: TurnViewModel; previousModelId?: string }) {
           data-switched={modelSwitched ? 'true' : undefined}
           title={
             modelSwitched
-              ? `本轮使用 ${turn.modelId}（上一轮是 ${props.previousModelId}）`
+              ? `本轮使用 ${turn.modelId}，session 期望 ${props.previousModelId}`
               : turn.modelId
           }
         >

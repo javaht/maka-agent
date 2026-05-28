@@ -6026,6 +6026,10 @@ button:active {
   color: var(--info-text);
 }
 
+.modelTableHeaderText .modelTableStickyHint {
+  color: var(--foreground-50);
+}
+
 .modelTableSearch {
   width: 100%;
   padding: 7px 11px;
@@ -8681,6 +8685,28 @@ button:active {
   font-weight: 600;
   font-size: 14px;
   color: var(--foreground);
+}
+
+/* PR-DAILY-REVIEW-RANGE-0: 今日 / 本周 / 本月 tabs. Active tab uses
+   the same accent-emphasis as the surrounding Settings nav so the
+   visual language stays consistent. */
+.maka-daily-review-range {
+  display: flex;
+  gap: 4px;
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--foreground-10);
+  justify-content: center;
+}
+
+.maka-daily-review-range > button {
+  flex: 1;
+  font-size: 12px;
+}
+
+.maka-daily-review-range > button[data-active="true"] {
+  background: oklch(from var(--accent) l c h / 0.12);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .maka-daily-review-totals {
