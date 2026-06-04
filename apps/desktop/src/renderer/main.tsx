@@ -661,6 +661,11 @@ function AppShell() {
       applyTheme(pref);
       applyDensity(den);
       applyThemePalette(palette);
+    }).catch(() => {
+      applyUiLocale('auto');
+      applyTheme('auto');
+      applyDensity('comfortable');
+      applyThemePalette('default');
     });
     void refreshSkills();
     void refreshPlanReminders();
@@ -1249,37 +1254,53 @@ function AppShell() {
   }
 
   async function createSkillTemplate() {
-    const result = await window.maka.skills.createStarter();
-    if (!result.ok) {
-      toastApi.error('无法创建示例技能', createSkillFailureCopy(result.reason));
-      return;
-    }
-    await refreshSkills();
-    toastApi.success('已创建示例技能', `${result.skill.id}/SKILL.md 已放到工作区 skills 目录。`);
-    const openResult = await window.maka.skills.open(result.skill.id, 'file');
-    if (!openResult.ok) {
-      toastApi.error('无法打开示例技能', openSkillFailureCopy(openResult.reason));
+    try {
+      const result = await window.maka.skills.createStarter();
+      if (!result.ok) {
+        toastApi.error('无法创建示例技能', createSkillFailureCopy(result.reason));
+        return;
+      }
+      await refreshSkills();
+      toastApi.success('已创建示例技能', `${result.skill.id}/SKILL.md 已放到工作区 skills 目录。`);
+      const openResult = await window.maka.skills.open(result.skill.id, 'file');
+      if (!openResult.ok) {
+        toastApi.error('无法打开示例技能', openSkillFailureCopy(openResult.reason));
+      }
+    } catch (error) {
+      toastApi.error('无法创建示例技能', cleanErrorMessage(error));
     }
   }
 
   async function openSkillsFolder() {
-    const result = await window.maka.app.openPath('skills');
-    if (!result.ok) {
-      toastApi.error(`无法打开${openPathActionLabel('skills')}`, openPathFailureCopy(result.reason));
+    try {
+      const result = await window.maka.app.openPath('skills');
+      if (!result.ok) {
+        toastApi.error(`无法打开${openPathActionLabel('skills')}`, openPathFailureCopy(result.reason));
+      }
+    } catch (error) {
+      toastApi.error(`无法打开${openPathActionLabel('skills')}`, cleanErrorMessage(error));
     }
   }
 
   async function openSkill(skillId: string) {
-    const result = await window.maka.skills.open(skillId, 'file');
-    if (!result.ok) {
-      toastApi.error('无法打开 Skill', openSkillFailureCopy(result.reason));
+    try {
+      const result = await window.maka.skills.open(skillId, 'file');
+      if (!result.ok) {
+        toastApi.error('无法打开 Skill', openSkillFailureCopy(result.reason));
+      }
+    } catch (error) {
+      toastApi.error('无法打开 Skill', cleanErrorMessage(error));
     }
   }
 
   async function openProjectFolder() {
-    const result = await window.maka.app.openPath('project');
-    if (!result.ok) {
-      toastApi.error(`无法打开${openPathActionLabel('project')}`, openPathFailureCopy(result.reason));
+    try {
+      const result = await window.maka.app.openPath('project');
+      if (!result.ok) {
+        toastApi.error(`无法打开${openPathActionLabel('project')}`, openPathFailureCopy(result.reason));
+      }
+    } catch (error) {
+      toastApi.error(`无法打开${openPathActionLabel('project')}`, cleanErrorMessage(error));
     }
   }
 
@@ -2409,9 +2430,13 @@ function AppShell() {
               }
             },
             onOpenWorkspace: async () => {
-              const result = await window.maka.app.openPath('workspace');
-              if (!result.ok) {
-                toastApi.error(`无法打开${openPathActionLabel('workspace')}`, openPathFailureCopy(result.reason));
+              try {
+                const result = await window.maka.app.openPath('workspace');
+                if (!result.ok) {
+                  toastApi.error(`无法打开${openPathActionLabel('workspace')}`, openPathFailureCopy(result.reason));
+                }
+              } catch (error) {
+                toastApi.error(`无法打开${openPathActionLabel('workspace')}`, cleanErrorMessage(error));
               }
             },
             onOpenProjectFolder: () => openProjectFolder(),
