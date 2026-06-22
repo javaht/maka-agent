@@ -727,3 +727,113 @@ Items to consider for a Phase 3 PR after WAWQAQ verdict:
 - Use `--agents-content-area-gap` (4px) consistently for Plan/Skills
   sub-section gaps (we currently use 14px; the reference's 4px reads
   much tighter, matching the dense-cockpit aesthetic).
+
+---
+
+## 14. Deep-RE Round 4 — Settings palette, popovers, Settings layout (§14)
+
+Continuing after WAWQAQ msg 7f3ca067 ("继续学习…多解决现有前端的问题，设计 布局的问题").
+
+### 14.1 Settings has its own primary-color palette
+
+When the renderer sets `[data-modal=agents-settings]` on the Settings
+surface, the reference applies a palette OVERRIDE:
+
+- Light / light-glass / classic-light / **default**:
+  - `--color-primary: #8ee5a1` (mint green)
+  - `--color-fill-secondary: #ebebeb` (warm gray)
+  - `--color-text-on-primary: #fdfdfd`
+- Light-parchment:
+  - `--color-primary: #202116` (deep charcoal — almost off-black)
+  - `--color-fill-secondary: #ede8e0` (parchment cream)
+- Dark themes: tokens come from `--color-bg-container` / `--color-text`
+  family (no warm primary override).
+
+**This is a meaningful design choice the reference team made:** Settings
+feels visually DISTINCT from chat because its primary accent is mint
+green instead of brand blue. A user clicking "Save" or "Apply" in
+Settings sees a mint-green CTA — semantically distinct from a Chat
+submit (brand blue). It's a subtle but premium pattern.
+
+**Maka uses `var(--accent)` everywhere**, including Settings. Adopting
+a Settings-only `data-surface=settings` token override would close
+this gap. ~10 lines of CSS.
+
+### 14.2 Sidebar background bypass for Settings
+
+When Settings is open and the theme is `light-parchment` /
+`dark-parchment` / `classic-light`:
+- `aside[data-settings-nav-column].agents-sidebar > div { background: 0 0 }`
+- `html[data-theme=light-parchment] .agents-layout-root .agents-sidebar
+  { background: 0 0 !important }`
+
+So the Settings nav column has NO background — it inherits from the
+Settings modal palette. Maka's Settings nav has its own
+`.settingsNavGroup` chrome; could simplify to inherit too.
+
+### 14.3 Popover side-translate pattern (Tailwind data-* variants)
+
+Reference uses Tailwind v4's data-attribute variants extensively for
+popover positioning:
+
+```
+.data-[side=top]:-translate-y-1[data-side=top] { translate: 0 -4px; }
+.data-[side=bottom]:translate-y-1[data-side=bottom] { translate: 0 4px; }
+.data-[state=open]:bg-fill-secondary[data-state=open] { background: var(--color-fill-secondary); }
+```
+
+So Base UI (or Radix-style) primitives that set `[data-side=top]`
+automatically get the right translate via the Tailwind utility class.
+Maka uses Base UI primitives too, but our CSS file has hand-rolled
+positioning rules instead of using Tailwind data-* variants. We have
+the tooling already (Tailwind v4 is installed); shifting to data-*
+variants would unify the pattern and remove ~30 lines of custom CSS.
+
+### 14.4 Selectable text — opt-in policy confirmed
+
+Atlas §13.5 already flagged `.allow-text-selection`. Verified in
+reference: it has `user-select: text !important`. The implication
+is that the reference's GLOBAL DEFAULT for chrome surfaces is
+`user-select: none` — the opposite of Maka, which inherits browser
+default (text everywhere). This explains why reference chat looks
+"more app-like" while Maka can accidentally enter text selection
+mode on chrome clicks.
+
+**Phase 3 candidate** (atlas §13.7): apply `user-select: none` to
+`.maka-session-panel`, `.maka-nav-row`, `.maka-list-row`,
+`.maka-module-main-header` headings (chrome surfaces only), and
+keep text selection on Markdown bodies + composer + readonly content.
+
+### 14.5 Additional polish gaps spotted
+
+- **Reference uses `cmd+k` global** to focus the chat input (`focus-input`
+  / `agent-input-history` in JS chunk strings); Maka has `cmd+k` but
+  the input doesn't auto-focus on cold open. Cold-open onboarding
+  would be smoother.
+- **Reference distinguishes `[data-glass-effects=off]` on win32 host**:
+  it disables all `backdrop-filter` globally. If we adopt
+  `[data-glass-effects=off]` toggle as a Settings option, the user
+  can opt out of macOS vibrancy too (some users dislike it). 4 lines
+  of CSS + a settings toggle.
+- **Reference has `[data-canvas-dialog]`** that overrides the standard
+  modal background with `var(--color-bg-container)` — a full-bleed
+  preview / artifact dialog variant. Maka doesn't have a canvas-style
+  dialog; would be useful for Artifacts pane preview.
+
+### 14.6 Phase 3 expanded scope (now 8 quick wins)
+
+Combining §13.7 + §14:
+1. `.agents-sidebar-floating-glass` for parchment-mode opaque sidebar
+2. `[data-parchment-brand-motion]` global theme tint
+3. SVG color-rewrite pattern (`[fill*=color-primary]` -> token)
+4. `.allow-text-selection` opt-in policy reversal
+5. Tighten Plan/Skill sub-section gaps 14 -> 4-6px
+6. **NEW:** Settings primary-color palette override
+   (`data-surface=settings` → mint-green primary)
+7. **NEW:** Adopt Tailwind data-* variants for popover side translate
+8. **NEW:** `cmd+k` cold-open composer auto-focus
+9. **NEW:** `[data-glass-effects=off]` toggle in Settings
+10. **NEW:** `[data-canvas-dialog]` variant for Artifacts pane
+
+Items 1-5 are pure CSS, can ship today. Items 6-7 need small JSX
+changes. Items 8-10 are bigger (new IPC / new dialog mounting).
