@@ -54,6 +54,7 @@ describe('heavy-task public synthetic trace harness', () => {
       assert.equal(replayedProjection.heavyTaskCompletion?.runtime.capKind, 'runtime_step_cap');
       assert.equal(replayedProjection.heavyTaskCompletion?.semantic.status, 'complete');
       assert.equal(replayedProjection.heavyTaskCompletion?.semantic.evidenceChain.outcome, 'complete');
+      assertPublicChecksPrecedeFinalSelfCheck(replayedProjection.events);
       assert.ok(replayedProjection.heavyTaskCompletion?.semantic.evidenceChain.completeItemIds.includes('targeted_check:check-gcov-initial'));
       assert.ok(replayedProjection.heavyTaskCompletion?.semantic.evidenceChain.completeItemIds.includes('repair:record-repair-gcov-flags'));
       assert.ok(replayedProjection.heavyTaskCompletion?.semantic.evidenceChain.completeItemIds.includes('patch:patch-gcov-flags'));
@@ -601,4 +602,20 @@ function source(toolCallId: string): { kind: 'model_tool'; toolCallId: string; s
 
 function assertNoPrivateLeak(content: string): void {
   assert.doesNotMatch(content, /hidden|private|evaluator-only|forbidden-source|official-verifier-output/);
+}
+
+function assertPublicChecksPrecedeFinalSelfCheck(events: TaskEvent[]): void {
+  const finalSelfCheckIndex = events.findIndex(
+    (event) => event.type === 'heavy_task_self_check_recorded'
+      && event.selfCheck.selfCheckId === 'self-check-public-pass',
+  );
+  assert.ok(finalSelfCheckIndex > 0, 'expected final accepted public self-check event');
+
+  const priorCheckRecords = events.slice(0, finalSelfCheckIndex).filter(
+    (event) => event.type === 'heavy_task_engineering_recorded'
+      && event.record.kind === 'targeted_check'
+      && event.record.source.toolName === 'check_record',
+  );
+
+  assert.equal(priorCheckRecords.length, 2);
 }
