@@ -9583,7 +9583,11 @@ button:active {
   line-height: 1.4;
 }
 
-.providerEditor header {
+/* Direct child only: this is the sheet's own title/badges header. The
+ * descendant form (`.providerEditor header`) also matched the nested
+ * `.modelTableHeader`, leaking the close-button padding-right onto the
+ * model card and pushing its refresh button 36px off the right edge. */
+.providerEditor > header {
   display: flex;
   align-items: start;
   justify-content: space-between;
@@ -9689,6 +9693,11 @@ button:active {
  * editor, not a form field. */
 .modelTable {
   display: grid;
+  /* Single column that fills the card. Without an explicit 1fr the
+   * implicit `auto` track sizes to content and the header row stops
+   * short of the card edge, so the right-aligned refresh button never
+   * reaches the right margin. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding: 12px;
   border: 1px solid var(--border);
@@ -9699,7 +9708,7 @@ button:active {
 
 .modelTableHeader {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
@@ -10359,7 +10368,10 @@ button:active {
 
 .providerConfigSheetClose {
   position: absolute;
-  top: 14px;
+  /* Center the 30px close button on the header's first line so it lines
+   * up with the title and the right-aligned status badges (~25px from
+   * the sheet top) instead of sitting a few px lower. */
+  top: 10px;
   right: 14px;
   display: inline-grid;
   place-items: center;
