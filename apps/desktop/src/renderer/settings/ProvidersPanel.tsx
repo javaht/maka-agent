@@ -22,6 +22,7 @@ import {
   PrimitiveTabs, PrimitiveTabsList, PrimitiveTabsTrigger,
   PrimitiveAccordion, PrimitiveAccordionItem, PrimitiveAccordionHeader, PrimitiveAccordionTrigger, PrimitiveAccordionPanel,
   Item, ItemMedia, ItemContent, ItemTitle, ItemDescription, ItemActions,
+  FieldRoot, Label, FieldDescription,
   Input, RelativeTime, Textarea, useToast, useModalA11y,
 } from '@maka/ui';
 import { formatRelativeTimestamp } from '@maka/core';
@@ -1664,12 +1665,13 @@ function ConnectionDetail(props: {
           <span className="settingsBadge">{categoryLabel(defaults.category)}</span>
         </span>
       </header>
-      <label>
-        <span>连接标识</span>
+      <FieldRoot className="grid gap-1.5">
+        <Label className="text-xs text-foreground-60">连接标识</Label>
         <Input value={connection.slug} disabled aria-label="模型连接标识" />
-      </label>
-      <label>
-        <span>服务地址 {hasFixedOAuthBaseUrl ? '（OAuth 固定）' : ''}</span>
+      </FieldRoot>
+      <FieldRoot className="grid gap-1.5">
+        <Label className="text-xs text-foreground-60">服务地址</Label>
+        {hasFixedOAuthBaseUrl && <FieldDescription>OAuth 固定</FieldDescription>}
         <Input
           value={hasFixedOAuthBaseUrl ? defaults.baseUrl : baseUrl}
           onChange={(event) => setBaseUrl(event.currentTarget.value)}
@@ -1679,14 +1681,13 @@ function ConnectionDetail(props: {
           aria-readonly={hasFixedOAuthBaseUrl ? 'true' : undefined}
           aria-label={hasFixedOAuthBaseUrl ? '模型连接服务地址，OAuth 固定' : '模型连接服务地址'}
         />
-      </label>
+      </FieldRoot>
       {needsApiKey && (
-        <label>
-          <span>
-            模型密钥 {hasSecret === true ? '（已设置，粘贴新值可替换）' : ''}
-            {hasSecret === 'loading' ? '（正在读取状态）' : ''}
-            {hasSecret === 'error' ? '（凭据状态未知）' : ''}
-          </span>
+        <FieldRoot className="grid gap-1.5">
+          <Label className="text-xs text-foreground-60">模型密钥</Label>
+          {hasSecret === true && <FieldDescription>已设置，粘贴新值可替换</FieldDescription>}
+          {hasSecret === 'loading' && <FieldDescription>正在读取状态</FieldDescription>}
+          {hasSecret === 'error' && <FieldDescription>凭据状态未知</FieldDescription>}
           <PasswordInput
             value={apiKey}
             onChange={setApiKey}
@@ -1694,7 +1695,7 @@ function ConnectionDetail(props: {
             ariaLabel={`${display.name} 模型密钥`}
             disabled={detailActionBusy}
           />
-        </label>
+        </FieldRoot>
       )}
       {needsOAuth && (
         <div className="providerUnavailableNotice" data-auth-kind="oauth">

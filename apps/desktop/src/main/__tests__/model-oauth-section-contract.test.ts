@@ -418,10 +418,18 @@ describe('Model OAuth catalog contract (PR-MODEL-OAUTH-ALL-0 + PR-CLAUDE-CARD-MO
     assert.match(addForm, /连接标识已存在/);
     assert.match(addForm, /这个供应商需要填写服务地址/);
 
-    assert.match(detail, /<span>连接标识<\/span>/);
+    // PR-FIELD-PRIMITIVE-PILOT: ConnectionDetail's form rows moved off the
+    // hand-written <label><span/> markup onto the governed Base UI Field
+    // primitive (FieldRoot + Label + FieldDescription). Label copy stays
+    // Chinese-first; the parenthetical state hints split into their own
+    // FieldDescription lines. AddProviderForm is intentionally left on the
+    // legacy <label><span/> markup this round (single-page pilot).
+    assert.match(detail, /<Label[^>]*>连接标识<\/Label>/);
     assert.match(detail, /aria-label="模型连接标识"/);
-    assert.match(detail, /<span>服务地址 \{hasFixedOAuthBaseUrl \? '（OAuth 固定）' : ''\}<\/span>/);
-    assert.match(detail, /模型密钥 \{hasSecret === true \? '（已设置，粘贴新值可替换）' : ''\}/);
+    assert.match(detail, /<Label[^>]*>服务地址<\/Label>/);
+    assert.match(detail, /hasFixedOAuthBaseUrl && <FieldDescription>OAuth 固定<\/FieldDescription>/);
+    assert.match(detail, /<Label[^>]*>模型密钥<\/Label>/);
+    assert.match(detail, /hasSecret === true && <FieldDescription>已设置，粘贴新值可替换<\/FieldDescription>/);
     assert.match(detail, /placeholder=\{hasSecret === true \? '••••••••' : '粘贴模型密钥'\}/);
     assert.match(detail, /ariaLabel=\{`\$\{display\.name\} 模型密钥`\}/);
     assert.match(detail, /获取模型密钥/);
