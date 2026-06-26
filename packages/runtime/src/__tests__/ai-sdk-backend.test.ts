@@ -30,6 +30,7 @@ import {
 } from '../request-shape.js';
 import {
   ARCHIVED_TOOL_RESULT_PLACEHOLDER_KIND,
+  ARCHIVED_TOOL_RESULT_REWRITE_VERSION,
   applyRuntimeEventContextBudget,
   buildHistoryCompactBlockFromSummary,
   type HistoryCompactBlock,
@@ -260,6 +261,92 @@ describe('AiSdkBackend model history', () => {
     assert.match(prompt, /"artifactId":"artifact-rt-result"/);
     assert.match(prompt, /"runtimeEventId":"rt-result"/);
     assert.equal(prompt.includes(oldResult.body), false);
+  });
+
+  test('preserves existing archive refs while adding newly archived refs', async () => {
+    const model = completionModel();
+    const existingResult = { body: 'EXISTING_ARCHIVE_REF_PAYLOAD'.repeat(20) };
+    const newResult = { body: 'NEW_ARCHIVE_REF_PAYLOAD'.repeat(20) };
+    const existingSerialized = JSON.stringify(existingResult);
+    const backend = new AiSdkBackend({
+      sessionId: 'session-1',
+      header: header(),
+      appendMessage: async () => {},
+      connection: connection(),
+      apiKey: 'sk-test',
+      modelId: 'mock-model-id',
+      permissionEngine: new PermissionEngine({ newId: () => 'permission-id', now: () => 1 }),
+      modelFactory: () => model,
+      tools: [],
+      newId: idGenerator(),
+      now: monotonicClock(),
+      contextBudget: {
+        name: 'existing-archive-ref-test',
+        staleToolResultPrune: {
+          enabled: true,
+          maxResultEstimatedTokens: 1,
+          minRecentTurnsFull: 0,
+          archiveRefs: [{
+            runtimeEventId: 'rt-result',
+            toolCallId: 'tool-1',
+            toolName: 'Read',
+            artifactId: 'artifact-existing-rt-result',
+            bodySha256: sha256(existingSerialized),
+            originalEstimatedTokens: existingSerialized.length,
+            originalBytes: utf8Bytes(existingSerialized),
+            rewriteVersion: ARCHIVED_TOOL_RESULT_REWRITE_VERSION,
+            reason: 'stale_tool_result_pruned_before_compact',
+          }],
+        },
+        charsPerToken: 1,
+      },
+      archiveToolResult: async (event) =>
+        event.runtimeEventId === 'rt-new-result'
+          ? { artifactId: 'artifact-new-rt-result' }
+          : undefined,
+    });
+
+    await drain(backend.send({
+      turnId: 'turn-current',
+      text: 'current user',
+      context: [],
+      runtimeContext: [
+        runtimeEvent({
+          id: 'rt-call',
+          turnId: 'turn-prev',
+          role: 'model',
+          author: 'agent',
+          content: { kind: 'function_call', id: 'tool-1', name: 'Read', args: { path: 'package.json' } },
+        }),
+        runtimeEvent({
+          id: 'rt-result',
+          turnId: 'turn-prev',
+          role: 'tool',
+          author: 'tool',
+          content: { kind: 'function_response', id: 'tool-1', name: 'Read', result: existingResult, isError: false },
+        }),
+        runtimeEvent({
+          id: 'rt-new-call',
+          turnId: 'turn-new',
+          role: 'model',
+          author: 'agent',
+          content: { kind: 'function_call', id: 'tool-2', name: 'Read', args: { path: 'new.txt' } },
+        }),
+        runtimeEvent({
+          id: 'rt-new-result',
+          turnId: 'turn-new',
+          role: 'tool',
+          author: 'tool',
+          content: { kind: 'function_response', id: 'tool-2', name: 'Read', result: newResult, isError: false },
+        }),
+      ],
+    }));
+
+    const prompt = JSON.stringify(compactPrompt(model));
+    assert.match(prompt, /"artifactId":"artifact-existing-rt-result"/);
+    assert.match(prompt, /"artifactId":"artifact-new-rt-result"/);
+    assert.equal(prompt.includes(existingResult.body), false);
+    assert.equal(prompt.includes(newResult.body), false);
   });
 
   test('history search does not re-add stale full tool results after archive pruning', async () => {
@@ -2190,6 +2277,7 @@ describe('AiSdkBackend context budget and prompt attribution', () => {
   test('stale tool-result pruning replaces old payloads before budgeting and preserves replay pairing', () => {
     const oldResult = { body: 'x'.repeat(500) };
     const newResult = { body: 'y'.repeat(500) };
+    const oldSerialized = JSON.stringify(oldResult);
     const events = [
       runtimeEvent({
         id: 'old-call',
@@ -2259,9 +2347,9 @@ describe('AiSdkBackend context budget and prompt attribution', () => {
           toolCallId: 'tool-old',
           toolName: 'Read',
           artifactId: 'artifact-old-result',
-          bodySha256: 'sha256-old-result',
-          originalEstimatedTokens: JSON.stringify(oldResult).length,
-          originalBytes: utf8Bytes(JSON.stringify(oldResult)),
+          bodySha256: sha256(oldSerialized),
+          originalEstimatedTokens: oldSerialized.length,
+          originalBytes: utf8Bytes(oldSerialized),
           rewriteVersion: 1,
           reason: 'stale_tool_result_pruned_before_compact',
         }],
@@ -2298,7 +2386,7 @@ describe('AiSdkBackend context budget and prompt attribution', () => {
     assert.equal(placeholder?.runtimeEventId, 'old-result');
     assert.equal(placeholder?.toolCallId, 'tool-old');
     assert.equal(placeholder?.toolName, 'Read');
-    assert.equal(placeholder?.bodySha256, 'sha256-old-result');
+    assert.equal(placeholder?.bodySha256, sha256(oldSerialized));
 
     const newResponse = budgeted.events.find((event) => event.id === 'new-result');
     assert.equal(newResponse?.content?.kind, 'function_response');
