@@ -84,7 +84,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const { buttonVariants, cn } = await import(pathToFileURL(resolve(REPO_ROOT, 'packages/ui/dist/ui.js')).href);
-const { markerVariants, streamVariants } = await import(pathToFileURL(resolve(REPO_ROOT, 'packages/ui/dist/primitives/chat.js')).href);
+const { markerVariants, streamVariants, toolVariants } = await import(pathToFileURL(resolve(REPO_ROOT, 'packages/ui/dist/primitives/chat.js')).href);
 
 const mainCssPath = process.argv[2] && resolve(process.argv[2]);
 const headCssPath = process.argv[3] && resolve(process.argv[3]);
@@ -135,6 +135,77 @@ const streamPanel = (el, id, attrs) =>
         + el('span', `${id}-chunk-redacted`, pair('maka-tool-output-stream-chunk', sv('chunk')), 'data-redacted="true"',
             'x' + el('span', `${id}-redacted-tag`, pair('maka-tool-output-stream-redacted-tag', sv('redacted-tag')), '', '[已脱敏]'))));
 
+// PR3b — the `ToolActivity` card shell. The only part NOT diffed is the RUNNING
+// status dot (its `maka-tool-pulse` ring is animated → phase-dependent
+// `getComputedStyle`), pinned by the cascade contract's keyframe frames +
+// chat.tsx literal instead. Every other surface — the inline section + count, all
+// six `[data-status]` card containers (border / bg / opacity swaps), the summary
+// header grid, the static dot colors, name / meta / duration / status-label /
+// body / intent, and the args `<pre>` override over the shared `.maka-code` base
+// — is static and diffed in full.
+//
+// Each card carries its REAL `isOpenByDefault` state (components.tsx): pending /
+// waiting_permission / running / errored render OPEN, completed / interrupted
+// render COLLAPSED. That matters — the most common historical card is a settled,
+// collapsed `completed` tool, whose `[open]>summary` divider is absent. So the
+// rich inner parts ride the (open) `errored` card, and a COLLAPSED `completed`
+// card is diffed too. The non-vacuous collapsed signal is the summary's
+// border-bottom: 1px on the open card, 0px on the collapsed one (the `[open]`
+// gate), so the rows genuinely exercise both states. (The body is hidden via
+// Chromium's `::details-content` pseudo, so its child `display` stays `block`
+// either way — the collapsed body row still diffs its box / typography parity.)
+const tv = (part) => toolVariants({ part });
+const openByDefault = (s) => s === 'pending' || s === 'waiting_permission' || s === 'running' || s === 'errored';
+// The SINGLE source of truth for the tool-card fixture: every production
+// `ToolActivityItem['status']` (the keys of components.tsx's STATUS_LABEL). The
+// cards, the header count, and the diffed IDS all derive from this one list, so
+// they can't drift apart; the cascade contract asserts it stays complete, so a
+// new status can't silently escape the zero-visual proof. `pending` has NO
+// `data-[status=pending]` branch in toolVariants, so it falls back to the base
+// card border + gray dot; it renders OPEN (isOpenByDefault).
+const STAT = ['pending', 'waiting_permission', 'running', 'completed', 'errored', 'interrupted'];
+const toolCardSection = (el) => {
+  const item = pair('maka-tool toolItem', tv('item'));
+  const hdr = pair('maka-tool-header', tv('header'));
+  const dot = pair('maka-tool-status-dot', tv('dot'));
+  const body = pair('maka-tool-body', tv('body'));
+  const dotEl = (s, id) => el('span', id, dot, `data-status="${s}" aria-hidden="true"`);
+  // The status-invariant inner parts (name / meta / duration / status-label /
+  // body / intent / args) ride the OPEN `errored` card so they're each measured
+  // once in their visible state — including the `[open]>summary` divider.
+  const erroredInner =
+    el('summary', 'tool-summary', hdr, '',
+        dotEl('errored', 'tool-dot-errored')
+        + el('span', 'tool-name', pair('maka-tool-name', tv('name')), '', 'Bash')
+        + el('span', 'tool-meta', pair('maka-tool-meta', tv('meta')), '',
+            el('span', 'tool-duration', pair('maka-tool-duration', tv('duration')), '', '1.2s')
+            + el('span', 'tool-statuslabel', pair('maka-tool-status-label', tv('status-label')), '', '失败')))
+      + el('div', 'tool-body', body, '',
+          el('p', 'tool-intent', pair('maka-tool-intent', tv('intent')), '', 'run a command')
+          + el('pre', 'tool-args', pair('maka-code toolArgs', cn('maka-code', tv('args'))), '', '{ "cmd": "ls" }'));
+  // The COLLAPSED `completed` card — the default history state. The summary loses
+  // its `[open]>summary` divider (border-bottom 0px vs the open card's 1px — the
+  // non-vacuous proof the collapsed branch is really exercised); the body's box /
+  // typography parity is diffed too. Both read identical across main/head.
+  const completedInner =
+    el('summary', 'tool-summary-collapsed', hdr, '',
+        dotEl('completed', 'tool-dot-completed')
+        + el('span', 'tool-name-collapsed', pair('maka-tool-name', tv('name')), '', 'Read'))
+      + el('div', 'tool-body-collapsed', body, '', 'hidden while collapsed');
+  const inner = (s) =>
+    s === 'errored' ? erroredInner
+    : s === 'completed' ? completedInner
+    // running dot excluded from IDS (animated); other open/collapsed dots diffed.
+    : el('summary', `tool-sum-${s}`, hdr, '', dotEl(s, `tool-dot-${s}`));
+  const card = (s) =>
+    el('details', `tool-item-${s}`, item, `data-slot="tool" data-status="${s}" ${openByDefault(s) ? 'open' : ''}`, inner(s));
+  return el('section', 'tool-section', pair('toolInline', tv('container')), 'aria-label="工具调用记录"',
+    el('header', 'tool-section-header', pair('', tv('container-header')), '',
+      '<strong>工具调用</strong>'
+      + el('span', 'tool-count', pair('maka-tool-count', tv('count')), '', String(STAT.length)))
+    + STAT.map(card).join('\n'));
+};
+
 // DOM tree mirroring TurnView nesting.
 const TREE = (side) => {
   const C = (p) => p[side];
@@ -178,14 +249,30 @@ const TREE = (side) => {
     // so the accent border + inset ring are diffed too.
     streamPanel(el, 'stream', ''),
     streamPanel(el, 'stream-live', 'data-live="true"'),
+    // The PR3b tool-activity card shell.
+    toolCardSection(el),
   ].join('\n');
 };
 
-const PROPS = ['display', 'height', 'minHeight', 'width', 'maxWidth', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderTopColor', 'borderBottomColor', 'borderTopStyle', 'borderTopLeftRadius', 'boxShadow', 'overflowX', 'overflowY', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textTransform', 'columnGap', 'color', 'backgroundColor', 'opacity', 'transition', 'justifyContent', 'alignItems', 'flexWrap', 'flexDirection', 'fontVariantNumeric', 'whiteSpace', 'wordBreak', 'textAlign', 'cursor'];
+const PROPS = ['display', 'height', 'minHeight', 'width', 'maxWidth', 'maxHeight', 'minWidth', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderTopColor', 'borderBottomColor', 'borderTopStyle', 'borderTopLeftRadius', 'boxShadow', 'overflowX', 'overflowY', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textTransform', 'gridTemplateColumns', 'columnGap', 'color', 'backgroundColor', 'opacity', 'transition', 'justifyContent', 'alignItems', 'flexWrap', 'flexDirection', 'fontVariantNumeric', 'whiteSpace', 'wordBreak', 'textOverflow', 'textAlign', 'cursor'];
 const IDS = ['summary', 'summary-chip-1', 'summary-chip-2', 'summary-chip-tools', 'summary-chip-duration', 'summary-chip-tokens', 'summary-chip-inprogress', 'summary-chip-switched', 'summary-switched', 'footer', 'footer-rest', 'footer-pending', 'footer-copy-pending', 'footer-copied', 'footer-failed', 'lineage-row', 'lineage-fwd', 'lineage-row-reverse', 'lineage-rev', 'aborted', 'failed-banner', 'failed-recovery',
   // PR3 stream shell (resting + live border ring). The pulse dot is excluded
   // (animated → phase-dependent computed style).
-  'stream', 'stream-header', 'stream-label', 'stream-counts', 'stream-count', 'stream-count-stderr', 'stream-count-redacted', 'stream-count-truncated', 'stream-body', 'stream-chunk', 'stream-chunk-stderr', 'stream-chunk-redacted', 'stream-redacted-tag', 'stream-live'];
+  'stream', 'stream-header', 'stream-label', 'stream-counts', 'stream-count', 'stream-count-stderr', 'stream-count-redacted', 'stream-count-truncated', 'stream-body', 'stream-chunk', 'stream-chunk-stderr', 'stream-chunk-redacted', 'stream-redacted-tag', 'stream-live',
+  // PR3b tool-card shell: section + count, all six `[data-status]` card
+  // containers at their REAL default open/collapsed state, the summary header
+  // grid, the static dot colors (running dot excluded — animated ring), the
+  // status-invariant inner parts (on the open `errored` card), and the COLLAPSED
+  // `completed` default — its summary (no `[open]` divider) + UA-hidden body.
+  'tool-section', 'tool-section-header', 'tool-count',
+  // Derived from the same STAT as the cards (no second hand-kept list to drift):
+  // every status' `[data-status]` container is diffed…
+  ...STAT.map((s) => `tool-item-${s}`),
+  'tool-summary', 'tool-name', 'tool-meta', 'tool-duration', 'tool-statuslabel', 'tool-body', 'tool-intent', 'tool-args',
+  'tool-summary-collapsed', 'tool-name-collapsed', 'tool-body-collapsed',
+  // …and every static dot, EXCEPT running's (its `maka-tool-pulse` ring is
+  // animated → phase-dependent `getComputedStyle`; pinned by the keyframe contract).
+  ...STAT.filter((s) => s !== 'running').map((s) => `tool-dot-${s}`)];
 // `::before` middot separators are now diffed for real (they render once the
 // CSS is inlined — the old `<link>` build couldn't apply them, masking this).
 // summary-chip-2 is a non-first chip (`[&:not(:first-child)]:before:…`);
