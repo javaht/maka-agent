@@ -43,7 +43,6 @@ import { renderSessionListPanel } from './session-list-render-helpers.js';
 const REPO_ROOT = resolve(import.meta.dirname, '../../../../..');
 const COMPONENTS_PATH = resolve(REPO_ROOT, 'packages', 'ui', 'src', 'chat-view.tsx');
 const SEARCH_MODAL_PATH = resolve(REPO_ROOT, 'packages', 'ui', 'src', 'search-modal.tsx');
-const MODAL_A11Y_PATH = resolve(REPO_ROOT, 'packages', 'ui', 'src', 'modal-a11y.ts');
 const COMMAND_PALETTE_CONTENT_PATH = join(REPO_ROOT, 'apps', 'desktop', 'src', 'renderer', 'command-palette-content-search.ts');
 
 describe('SearchModal lifecycle contract (PR-SIDEBAR-IA-0 Phase 3 P0 fixup)', () => {
@@ -256,17 +255,16 @@ describe('SearchModal lifecycle contract (PR-SIDEBAR-IA-0 Phase 3 P0 fixup)', ()
 
   it('search input keeps focus after results load until the user navigates results', async () => {
     const searchModal = await readFile(SEARCH_MODAL_PATH, 'utf8');
-    const hook = await readFile(MODAL_A11Y_PATH, 'utf8');
 
     assert.match(
-      hook,
-      /initialFocusRef\?: RefObject<HTMLElement \| null>/,
-      'useModalA11y must allow a modal to nominate the correct initial focus target',
+      searchModal,
+      /initialFocus=\{inputRef\}/,
+      'SearchModal must give initial modal focus to the search input, not the close button',
     );
     assert.match(
       searchModal,
-      /useModalA11y\(dialogRef,\s*props\.onClose,\s*inputRef,\s*\{\s*suppressFocusRestoreRef\s*\}\)/,
-      'SearchModal must give initial modal focus to the search input, not the close button',
+      /finalFocus=\{\(\) => \(suppressFocusRestoreRef\.current \? false : true\)\}/,
+      'SearchModal must skip Base UI focus restore when navigating to a result so the destination owns focus',
     );
     assert.match(
       searchModal,
@@ -424,16 +422,6 @@ describe('SearchModal lifecycle contract (PR-SIDEBAR-IA-0 Phase 3 P0 fixup)', ()
     );
     assert.match(searchModal, /搜索服务需要刷新，请重试。/);
     assert.doesNotMatch(searchModal, /搜索暂时不可用，请稍后重试。/, 'Search modal fallback error should not read like a generic unavailable feature');
-  });
-
-  it('modal focus restoration does not steal focus during React StrictMode effect replay', async () => {
-    const hook = await readFile(MODAL_A11Y_PATH, 'utf8');
-
-    assert.match(
-      hook,
-      /queueMicrotask\(\(\) => \{\s*if \(suppressFocusRestoreRef\?\.current\) return;\s*if \(document\.contains\(container\)\) return;\s*if \(previouslyFocused && document\.contains\(previouslyFocused\)\)/m,
-      'StrictMode effect cleanup must not restore focus to the opener while the modal container is still mounted',
-    );
   });
 
   it('session time buckets use product labels without unfinished-state wording', async () => {
