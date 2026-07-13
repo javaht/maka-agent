@@ -232,7 +232,7 @@ test('adds Fireworks AI with its exact snapshot model and shared upstream mark',
 function maskRenderContract(element: Element): { usesAssetMask: boolean; followsForeground: boolean } {
   const style = getComputedStyle(element);
   return {
-    usesAssetMask: style.maskImage.includes('data:image/svg+xml'),
+    usesAssetMask: style.maskImage.startsWith('url('),
     followsForeground: style.backgroundColor === style.color,
   };
 }
@@ -265,6 +265,35 @@ test('adds LM Studio as a no-auth local runtime with the shared official mark', 
   await expect(detailMark).toBeVisible();
   expect(await detailMark.evaluate(maskRenderContract)).toEqual({ usesAssetMask: true, followsForeground: true });
   await expect(page.getByLabel(/LM Studio 模型密钥/)).toHaveCount(0);
+});
+
+test('adds LocalAI with its default endpoint, optional key, and official mark', async ({ window: page }) => {
+  await page.getByRole('button', { name: '展开侧边栏' }).click();
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.locator('[aria-label="设置分组"]').getByText('模型', { exact: true }).click();
+  await page.getByRole('button', { name: '添加服务商' }).click();
+
+  await page.getByRole('tab', { name: '本地' }).click();
+  await page.getByPlaceholder('搜索服务商').fill('LocalAI');
+  const catalogMark = page.locator(
+    '.providerCatalogRow[data-provider="localai"] .providerLogo .providerAssetMask',
+  );
+  await expect(catalogMark).toBeVisible();
+  expect(await catalogMark.evaluate(maskRenderContract)).toEqual({ usesAssetMask: true, followsForeground: true });
+  await page.getByRole('button', { name: /添加模型供应商：LocalAI/ }).click();
+
+  await expect(page.getByLabel('模型供应商连接标识')).toHaveValue('localai');
+  await expect(page.getByLabel('模型供应商服务地址')).toHaveValue('http://localhost:8080/v1');
+  await expect(page.getByLabel('模型供应商默认模型')).toHaveValue('qwen3-8b');
+  await page.getByRole('button', { name: '保存供应商' }).click();
+
+  await expect(page.getByRole('heading', { name: 'LocalAI', exact: true }).first()).toBeVisible();
+  const detailMark = page.locator(
+    '.providerSubpageHeader .providerLogo[data-provider="localai"] .providerAssetMask',
+  );
+  await expect(detailMark).toBeVisible();
+  expect(await detailMark.evaluate(maskRenderContract)).toEqual({ usesAssetMask: true, followsForeground: true });
+  await expect(page.getByRole('textbox', { name: '模型密钥' })).toBeVisible();
 });
 
 test('adds Mistral with its exact snapshot model, API-key field, and shared official mark', async ({ window: page }) => {

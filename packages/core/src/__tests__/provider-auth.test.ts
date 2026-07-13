@@ -283,6 +283,37 @@ describe('ProviderAuth contract', () => {
     expect(contract.actionAvailability.fetch_models).toBe('available');
   });
 
+  test('LocalAI keeps API-key setup available without making the key required', () => {
+    const contract = deriveProviderAuthContract({
+      providerType: 'localai',
+      hasSecret: false,
+    });
+
+    expect(contract.setupMode).toBe('api_key');
+    expect(contract.state).toBe('configured');
+    expect(contract.validationStatus).toBe('not_required');
+    expect(contract.requiresSecret).toBe(false);
+    expect(contract.sendMayUseWithoutSecret).toBe(true);
+    expect(contract.actionAvailability.save_secret).toBe('available');
+    expect(contract.actionAvailability.test_credentials).toBe('available');
+    expect(contract.actionAvailability.fetch_models).toBe('available');
+    expect(contract.copy.detail).toContain('可选');
+  });
+
+  test('LocalAI preserves endpoint validation failures without making its optional key required', () => {
+    const contract = deriveProviderAuthContract({
+      providerType: 'localai',
+      hasSecret: true,
+      lastTestStatus: 'needs_reauth',
+    });
+
+    expect(contract.state).toBe('needs_reauth');
+    expect(contract.validationStatus).toBe('needs_reauth');
+    expect(contract.requiresSecret).toBe(false);
+    expect(contract.sendMayUseWithoutSecret).toBe(true);
+    expect(contract.copy.label).toContain('需要重新授权');
+  });
+
   test('disabled providers hide actions regardless of stored credential state', () => {
     const contract = deriveProviderAuthContract({
       providerType: 'openai',

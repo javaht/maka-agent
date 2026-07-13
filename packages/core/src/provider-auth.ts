@@ -1,5 +1,6 @@
 import {
   PROVIDER_DEFAULTS,
+  providerAuthRequiresSecret,
   type ConnectionAuth,
   type ConnectionLastTestStatus,
   type LlmConnection,
@@ -80,9 +81,9 @@ export function deriveProviderAuthContract(input: ProviderAuthContractInput): Pr
       providerType: input.providerType,
       setupMode: setupModeForProvider(input.providerType),
       state: 'disabled',
-      validationStatus: input.lastTestStatus ?? (defaults.authKind === 'none' ? 'not_required' : 'not_run'),
-      requiresSecret: defaults.authKind !== 'none',
-      sendMayUseWithoutSecret: defaults.authKind === 'none',
+      validationStatus: input.lastTestStatus ?? (providerAuthRequiresSecret(input.providerType) ? 'not_run' : 'not_required'),
+      requiresSecret: providerAuthRequiresSecret(input.providerType),
+      sendMayUseWithoutSecret: !providerAuthRequiresSecret(input.providerType),
       actionAvailability,
       copy: {
         label: `${defaults.label} 已关闭`,
@@ -130,6 +131,26 @@ export function deriveProviderAuthContract(input: ProviderAuthContractInput): Pr
         label: `${defaults.label} 账号登录预览`,
         detail: '当前仅展示账号登录状态入口；普通模型密钥连接仍可在聊天模型中使用。',
       },
+    };
+  }
+
+  if (defaults.authKind === 'optional_api_key') {
+    const state = authStateFromSecretAndTest(true, input.lastTestStatus);
+    return {
+      providerType: input.providerType,
+      setupMode: 'api_key',
+      state,
+      validationStatus: input.lastTestStatus ?? (hasSecret ? 'not_run' : 'not_required'),
+      requiresSecret: false,
+      sendMayUseWithoutSecret: true,
+      actionAvailability: {
+        ...actionAvailability,
+        save_secret: 'available',
+        test_credentials: 'available',
+        fetch_models: supportsModelDiscovery ? 'available' : 'hidden',
+        revoke_auth: hasSecret ? 'available' : 'hidden',
+      },
+      copy: copyForOptionalApiKey(defaults.label, state, hasSecret),
     };
   }
 
@@ -255,6 +276,44 @@ function copyForApiKey(label: string, state: ProviderAuthState): ProviderAuthCon
       return {
         label,
         detail: '当前状态不走模型密钥凭据流程。',
+      };
+  }
+}
+
+function copyForOptionalApiKey(
+  label: string,
+  state: ProviderAuthState,
+  hasSecret: boolean,
+): ProviderAuthContract['copy'] {
+  switch (state) {
+    case 'validated':
+      return {
+        label: `${label} 连接验证通过`,
+        detail: '这只代表实例端点和鉴权配置验证通过，不代表消息发送、流式响应或中断恢复已经运行可用。',
+      };
+    case 'needs_reauth':
+      return {
+        label: `${label} 需要重新授权`,
+        detail: '上次连接测试显示鉴权失败；请检查实例鉴权设置或可选模型密钥后重试。',
+      };
+    case 'error':
+      return {
+        label: `${label} 连接测试失败`,
+        detail: '上次测试未通过；详情必须使用概括后的错误信息，不展示服务商原始响应。',
+      };
+    case 'configured':
+      return {
+        label: `${label} 可选模型密钥`,
+        detail: hasSecret
+          ? '已保存可选模型密钥；也可删除密钥连接未启用鉴权的实例。'
+          : '模型密钥可选；未启用鉴权的实例可直接连接。',
+      };
+    case 'not_configured':
+    case 'disabled':
+    case 'preview_only':
+      return {
+        label,
+        detail: '当前状态不走可选模型密钥流程。',
       };
   }
 }
