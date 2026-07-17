@@ -1,5 +1,5 @@
 import type { AgentRunEvent, AgentRunHeader, AgentRunStore, RuntimeEvent, RuntimeEventStore } from '@maka/core';
-import { isTerminalRuntimeEvent } from '@maka/core';
+import { DurableStoreWriteError, isTerminalRuntimeEvent } from '@maka/core';
 import { redactSecrets } from '@maka/core/redaction';
 import type {
   SessionBlockedReason,
@@ -67,10 +67,15 @@ export type AgentRunLineage = Partial<Pick<
   'parentRunId' | 'parentTurnId' | 'retriedFromTurnId' | 'regeneratedFromTurnId' | 'branchOfTurnId' | 'parentSessionId'
 >>;
 
+export type AgentRunDurability = 'best_effort' | 'required';
+
 export interface AgentRunInput {
   sessionId: string;
   header: SessionHeader;
   userInput: UserMessageInput;
+  runId?: string;
+  userMessageId?: string;
+  durability?: AgentRunDurability;
   store: SessionStore;
   runStore?: AgentRunStore;
   runtimeEventStore?: RuntimeEventStore;
@@ -129,7 +134,6 @@ export class AgentRun {
     owner: 'event' | 'stop';
     event?: RuntimeEvent;
     write?: Promise<void>;
-    persisted?: boolean;
     stopCompleted?: boolean;
   } | undefined;
 
@@ -137,7 +141,10 @@ export class AgentRun {
     if (input.runStore && !input.runtimeEventStore) {
       throw new Error('RuntimeEventStore is required when AgentRunStore is configured');
     }
-    this.runId = input.newId();
+    if (input.durability === 'required' && (!input.runStore || !input.runtimeEventStore)) {
+      throw new Error('Required AgentRun durability needs AgentRunStore and RuntimeEventStore');
+    }
+    this.runId = input.runId ?? input.newId();
     this.sessionId = input.sessionId;
     this.turnId = input.userInput.turnId;
     this.header = input.header;
@@ -349,7 +356,7 @@ export class AgentRun {
 
     let initialRuntimeEventId: string;
     if (this.recordsSessionMessages()) {
-      const userMessageId = this.input.newId();
+      const userMessageId = this.input.userMessageId ?? this.input.newId();
       const userMessageTs = this.input.now();
       initialRuntimeEventId = userMessageId;
       const userMsg: UserMessage = {
@@ -373,7 +380,9 @@ export class AgentRun {
     }
 
     const initialRuntimeEvent = this.buildInitialRuntimeEvent(initialRuntimeEventId, this.lastTs);
-    await this.recordRuntimeEvents([initialRuntimeEvent]);
+    await this.recordRuntimeEvents([initialRuntimeEvent], {
+      requireDurableWrite: this.requiresDurablePersistence(),
+    });
 
     if (!this.header.connectionLocked) {
       this.header = await this.input.hooks.updateHeader(this.sessionId, { connectionLocked: true });
@@ -530,7 +539,12 @@ export class AgentRun {
         continue;
       }
       const write = this.enqueueRuntimeEventStore('append runtime event', async () => {
-        await this.input.runtimeEventStore?.appendRuntimeEvent(this.sessionId, this.runId, eventForStore);
+        await this.input.runtimeEventStore?.appendRuntimeEvent(
+          this.sessionId,
+          this.runId,
+          eventForStore,
+          { durable: terminal || options.requireDurableWrite === true },
+        );
       }, { rethrow: terminal || options.requireTerminalWrite || options.requireDurableWrite });
       if (terminal && this.terminalClaim) this.terminalClaim.write = write;
       if (options.requireDurableWrite && !terminal) {
@@ -544,6 +558,7 @@ export class AgentRun {
         try {
           await write;
         } catch (error) {
+          if (error instanceof DurableStoreWriteError) throw error;
           if (!(await this.eventLandedInLedger(eventForStore.id))) throw error;
           // The write landed and the ledger answered a fresh read — the
           // failure was in the reporting, not the store. Lift the
@@ -555,9 +570,6 @@ export class AgentRun {
         continue;
       }
       await write;
-      if (terminal) {
-        if (this.terminalClaim) this.terminalClaim.persisted = true;
-      }
     }
   }
 
@@ -668,23 +680,34 @@ export class AgentRun {
         : {}),
     };
     try {
-      await this.input.runStore.createRun(header);
-      await this.input.runStore.appendEvent(this.sessionId, this.runId, {
-        type: 'run_created',
-        id: this.input.newId(),
-        runId: this.runId,
-        sessionId: this.sessionId,
-        turnId: this.turnId,
-        ts: createdAt,
-        data: {
-          textLength: this.input.userInput.text.length,
-          attachmentCount: this.input.userInput.attachments?.length ?? 0,
+      const durable = this.requiresDurablePersistence();
+      await this.input.runStore.createRun(header, { durable });
+      await this.input.runStore.appendEvent(
+        this.sessionId,
+        this.runId,
+        {
+          type: 'run_created',
+          id: this.input.newId(),
+          runId: this.runId,
+          sessionId: this.sessionId,
+          turnId: this.turnId,
+          ts: createdAt,
+          data: {
+            textLength: this.input.userInput.text.length,
+            attachmentCount: this.input.userInput.attachments?.length ?? 0,
+          },
         },
-      });
+        { durable },
+      );
     } catch (error) {
       this.runStoreAvailable = false;
+      if (this.requiresDurablePersistence()) throw error;
       this.enqueueTraceWriteFailure(error);
     }
+  }
+
+  private requiresDurablePersistence(): boolean {
+    return this.input.durability === 'required';
   }
 
   private async buildPriorRuntimeContext(): Promise<PriorRuntimeContext | undefined> {
@@ -785,17 +808,28 @@ export class AgentRun {
 
   private async markRunStarted(ts: number): Promise<void> {
     if (!this.input.runStore || !this.runStoreAvailable) return;
-    this.enqueueRunStore('mark run started', async () => {
-      await this.input.runStore?.updateRun(this.sessionId, this.runId, { status: 'running', updatedAt: ts });
-      await this.input.runStore?.appendEvent(this.sessionId, this.runId, {
-        type: 'run_started',
-        id: this.input.newId(),
-        runId: this.runId,
-        sessionId: this.sessionId,
-        turnId: this.turnId,
-        ts,
-      });
-    });
+    const durable = this.requiresDurablePersistence();
+    const write = this.enqueueRunStore(
+      'mark run started',
+      async () => {
+        await this.input.runStore?.appendEvent(
+          this.sessionId,
+          this.runId,
+          {
+            type: 'run_started',
+            id: this.input.newId(),
+            runId: this.runId,
+            sessionId: this.sessionId,
+            turnId: this.turnId,
+            ts,
+          },
+          { durable },
+        );
+        await this.input.runStore?.updateRun(this.sessionId, this.runId, { status: 'running', updatedAt: ts }, { durable });
+      },
+      { rethrow: durable },
+    );
+    if (durable) await write;
   }
 
   private recordStatusFromTransition(
@@ -959,7 +993,6 @@ export class AgentRun {
         turnId: this.turnId,
         ts,
         terminalEvent,
-        terminalEventAlreadyPersisted: terminalClaim.persisted === true,
         ...(this.failureClass ?? finalStatus?.blockedReason
           ? { failureClass: this.failureClass ?? finalStatus?.blockedReason }
           : {}),
@@ -974,7 +1007,6 @@ export class AgentRun {
       });
       if (!terminalClaim.write) terminalClaim.write = commit.then(() => undefined);
       const result = await commit;
-      terminalClaim.persisted = true;
       this.terminalRunHeaderCommitted = result.headerCommitted;
       if (result.headerCommitError !== undefined) {
         await this.enqueueTraceWriteFailure(result.headerCommitError, 'commit terminal run header');
