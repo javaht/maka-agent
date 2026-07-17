@@ -4,7 +4,6 @@ import type {
   PermissionMode,
   PlanReminder,
   SessionSummary,
-  SettingsSection,
   ThemePalette,
   ThemePreference,
   UiLocale,
@@ -62,19 +61,13 @@ import { deriveAppShellTurnViewModel } from './app-shell-turn-view-model';
 import { readScrollMotionBehavior } from './scroll-motion-policy';
 import { deriveBranchBanner } from './branch-banner';
 import { applyTheme, applyThemePalette } from './theme';
-import { safeLocalStorageSet } from './browser-storage';
 import { filterSessions, readNavSelection } from './nav-selection';
 import {
-  readSessionListCollapsed,
-  readSessionListWidth,
   SESSION_LIST_COLLAPSED_WIDTH,
   SESSION_LIST_EXPANDED_MAX_WIDTH,
   SESSION_LIST_EXPANDED_MIN_WIDTH,
 } from './session-list-layout';
 import {
-  readSessionWorkbarCollapsed,
-  readSessionWorkbarTab,
-  readSessionWorkbarWidth,
   SESSION_WORKBAR_MAX_WIDTH,
   SESSION_WORKBAR_MIN_WIDTH,
 } from './session-workbar-layout';
@@ -119,6 +112,8 @@ import { useShellMemoryPill } from './use-shell-memory-pill';
 import { useShellConnections } from './use-shell-connections';
 import { useShellChatModel } from './use-shell-chat-model';
 import { useShellLiveTurn } from './use-shell-live-turn';
+import { useShellLayout } from './use-shell-layout';
+import { useSettingsModal } from './use-settings-modal';
 import {
   isSessionWorkspaceUnavailableError,
   showSessionWorkspaceUnavailableToast,
@@ -217,9 +212,16 @@ export function AppShell({
     refreshConnections,
     handleConnectionEvent,
   } = useShellConnections({ toastApi });
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsRequestedSection, setSettingsRequestedSection] = useState<SettingsSection | undefined>(undefined);
-  const [settingsProviderCatalogOpen, setSettingsProviderCatalogOpen] = useState(false);
+  const {
+    settingsOpen,
+    settingsRequestedSection,
+    settingsProviderCatalogOpen,
+    setSettingsOpen,
+    setSettingsProviderCatalogOpen,
+    openSettings,
+    openSettingsSection,
+    openProviderCatalog,
+  } = useSettingsModal();
   const [themePref, setThemePref] = useState<ThemePreference>('auto');
   const [themePalette, setThemePalette] = useState<ThemePalette>('default');
   const [uiLocalePreference, setUiLocalePreference] = useState<UiLocalePreference>('auto');
@@ -690,11 +692,18 @@ export function AppShell({
   const showOnboardingHero =
     sessions.length === 0 && !onboardingSettled && onboardingState !== undefined && onboardingState.kind !== 'ready_with_history';
   const onboardingComposerHidden = isOnboardingLoading || (showOnboardingHero && onboardingState !== undefined);
-  const [sessionListWidth, setSessionListWidth] = useState(() => readSessionListWidth());
-  const [sessionListCollapsed, setSessionListCollapsed] = useState(() => readSessionListCollapsed());
-  const [workbarCollapsed, setWorkbarCollapsed] = useState(() => readSessionWorkbarCollapsed());
-  const [workbarWidth, setWorkbarWidth] = useState(() => readSessionWorkbarWidth());
-  const [workbarTab, setWorkbarTab] = useState(() => readSessionWorkbarTab());
+  const {
+    sessionListWidth,
+    setSessionListWidth,
+    sessionListCollapsed,
+    setSessionListCollapsed,
+    workbarCollapsed,
+    setWorkbarCollapsed,
+    workbarWidth,
+    setWorkbarWidth,
+    workbarTab,
+    setWorkbarTab,
+  } = useShellLayout();
   const { startColumnResize, onResizeHandleKeyDown, startWorkbarResize, onWorkbarResizeHandleKeyDown } = useStableActions(createAppShellLayoutActions, {
     sessionListCollapsed,
     sessionListWidth,
@@ -1079,13 +1088,8 @@ export function AppShell({
     });
   }
 
-  function openSettings() {
-    setSettingsProviderCatalogOpen(false);
-    setSettingsOpen(true);
-  }
-
   /**
-   * PR-UI-RENDER-2 — single chokepoint for the Markdown internal-URI
+   * PR-UI-RENDER-2 - single chokepoint for the Markdown internal-URI
    * router. Receives a typed `MakaUriDest` from the link override in
    * `<Markdown>` and dispatches to the existing app navigation
    * surfaces:
@@ -1117,26 +1121,6 @@ export function AppShell({
         return _exhaustive;
       }
     }
-  }
-
-  /**
-   * Opens Settings and jumps directly to the named section. Writes the section
-   * to localStorage (so the next cold-open lands there too) and threads it
-   * through `requestedSection` so an already-open Settings modal switches
-   * tabs without close/reopen.
-   */
-  function openSettingsSection(section: SettingsSection) {
-    safeLocalStorageSet('maka-settings-section-v1', section);
-    setSettingsRequestedSection(section);
-    setSettingsProviderCatalogOpen(false);
-    setSettingsOpen(true);
-  }
-
-  function openProviderCatalog() {
-    safeLocalStorageSet('maka-settings-section-v1', 'models');
-    setSettingsRequestedSection('models');
-    setSettingsProviderCatalogOpen(true);
-    setSettingsOpen(true);
   }
 
   function closeSettings() {
