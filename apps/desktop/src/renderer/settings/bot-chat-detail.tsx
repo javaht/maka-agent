@@ -184,7 +184,7 @@ export function BotChatChannelDetail(props: {
               {inQuickOnboarding ? (
                 <>
                   <Button type="button" disabled={props.actionBusy} onClick={() => setScanLoginOpen(true)}>
-                    {provider === 'wecom' ? '快捷绑定' : provider === 'wechat' ? '扫码登录' : '扫码接入'}
+                    {provider === 'wecom' ? '快捷接入' : '扫码接入'}
                   </Button>
                   {provider === 'wechat' && (channel.token || status?.identity) && (
                     <Button type="button" variant="secondary" disabled={props.actionBusy} onClick={() => void props.onDisconnectWechat()}>
@@ -285,7 +285,7 @@ export function BotChatChannelDetail(props: {
               />
             ) : null}
             <Button type="button" onClick={() => setScanLoginOpen(true)}>
-              {provider === 'wecom' ? '开始快捷绑定' : `使用${provider === 'feishu' && feishuBrand === 'lark' ? ' Lark ' : BOT_LABELS[provider].label}扫码接入`}
+              {provider === 'wecom' ? '开始快捷接入' : `使用${provider === 'feishu' && feishuBrand === 'lark' ? ' Lark ' : BOT_LABELS[provider].label}扫码接入`}
             </Button>
           </section>
         )}
@@ -315,9 +315,9 @@ export function BotChatChannelDetail(props: {
         )}
 
         {support === 'planned' && (
-          <div className="settingsNotice" data-tone="passive">
-            这个平台当前只作为平台清单展示，不会进入可用渠道，也不会保存为计划提醒投递目标。
-          </div>
+          <Alert variant="passive">
+            <AlertDescription>这个平台当前只作为平台清单展示，不会进入可用渠道，也不会保存为计划提醒投递目标。</AlertDescription>
+          </Alert>
         )}
 
         {/* WeChat keeps scan login as a first-class action, separate from
@@ -494,10 +494,9 @@ function BotCredentialFields(props: {
             );
           case 'notice':
             return (
-              <div key={`notice-${index}`} className="settingsBotInfoNotice">
-                <span className="settingsBotInfoNoticeIcon" aria-hidden="true">ⓘ</span>
-                <span>{field.text}</span>
-              </div>
+              <Alert key={`notice-${index}`} variant="info">
+                <AlertDescription>{field.text}</AlertDescription>
+              </Alert>
             );
         }
       })}
