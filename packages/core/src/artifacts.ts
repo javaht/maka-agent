@@ -7,6 +7,7 @@ export type ArtifactSource =
   | 'history_compact_block'
   | 'history_compact_source'
   | 'provider_request_capture'
+  | 'deep_research'
   | 'user_upload'
   | 'export'
   | 'snapshot'
@@ -30,6 +31,8 @@ export interface ArtifactRecord {
   mimeType?: string;
   source?: ArtifactSource;
   summary?: string;
+  /** Durable role for artifacts owned by a Deep Research workspace. */
+  deepResearchRole?: import('./deep-research-run.js').DeepResearchArtifactRole;
   status: ArtifactStatus;
 }
 
